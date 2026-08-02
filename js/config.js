@@ -103,6 +103,8 @@ function initNavegacion() {
 
       if (viewId === 'view-historial' && typeof cargarHistorial === 'function') cargarHistorial();
       if (viewId === 'view-productos' && typeof cargarProductos === 'function') cargarProductos();
+      if (viewId === 'view-compras' && typeof cargarCompras === 'function') cargarCompras();
+      if (viewId === 'view-taller' && typeof cargarOrdenes === 'function') cargarOrdenes();
     });
   });
 }
@@ -117,4 +119,5 @@ document.addEventListener('DOMContentLoaded', () => {
 document.addEventListener('pos:sesion-iniciada', () => {
   if (typeof cargarProductos === 'function') cargarProductos();
   if (typeof cargarHistorial === 'function') cargarHistorial();
+  if (typeof cargarCompras === 'function' && esAdmin()) cargarCompras();
 });

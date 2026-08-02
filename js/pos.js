@@ -25,14 +25,13 @@ const elPosCliente = document.getElementById('posCliente');
 const elCartTableBody = document.getElementById('cartTableBody');
 const elCartTotalText = document.getElementById('cartTotalText');
 const elBtnFinalizarVenta = document.getElementById('btnFinalizarVenta');
-
-const elModalPago = document.getElementById('modalPago');
-const elModalMetodoPago = document.getElementById('modalMetodoPago');
-const elBtnCancelarPago = document.getElementById('btnCancelarPago');
-const elBtnConfirmarPago = document.getElementById('btnConfirmarPago');
+const elBtnLimpiarSeleccion = document.getElementById('btnLimpiarSeleccion');
 
 const elModalVentaExitosa = document.getElementById('modalVentaExitosa');
 const elVentaExitosaDetalle = document.getElementById('ventaExitosaDetalle');
+const elVentaExitosaVuelto = document.getElementById('ventaExitosaVuelto');
+const elVentaExitosaVueltoMonto = document.getElementById('ventaExitosaVueltoMonto');
+const elVentaExitosaAviso = document.getElementById('ventaExitosaAviso');
 const elBtnPrintTicketVenta = document.getElementById('btnPrintTicketVenta');
 const elBtnCloseVentaExitosa = document.getElementById('btnCloseVentaExitosa');
 
@@ -69,8 +68,14 @@ function setupPosEventListeners() {
 
   if (elBtnAgregarItem) elBtnAgregarItem.addEventListener('click', agregarItemAlCarrito);
   if (elBtnFinalizarVenta) elBtnFinalizarVenta.addEventListener('click', abrirModalPago);
-  if (elBtnCancelarPago) elBtnCancelarPago.addEventListener('click', cerrarModalPago);
-  if (elBtnConfirmarPago) elBtnConfirmarPago.addEventListener('click', confirmarVenta);
+
+  // Limpia SOLO los campos de ingreso; el carrito queda intacto
+  if (elBtnLimpiarSeleccion) elBtnLimpiarSeleccion.addEventListener('click', () => {
+    limpiarFormularioItem();
+    if (elSugerencias) elSugerencias.classList.remove('show');
+    elItemNombre?.focus();
+    showToast('Selección limpiada', '');
+  });
 
   if (elBtnPrintTicketVenta) elBtnPrintTicketVenta.addEventListener('click', () => {
     if (ultimaVentaRegistrada) imprimirTicketVenta(ultimaVentaRegistrada, ultimaVentaRegistrada.items);
@@ -234,62 +239,79 @@ function renderCart() {
 // ============================================================
 function abrirModalPago() {
   if (cart.length === 0) { showToast('Agrega al menos un producto al carrito', 'err'); return; }
-  if (elModalMetodoPago) elModalMetodoPago.value = '';
-  if (elModalPago) elModalPago.classList.add('show');
+
+  const total = cart.reduce((acc, it) => acc + it.subtotal, 0);
+
+  abrirSelectorPago({
+    titulo: 'Confirmar Pago',
+    subtitulo: 'Elige el medio de pago. Con efectivo se calcula el vuelto.',
+    total,
+    textoConfirmar: 'Confirmar Venta',
+    onConfirmar: (metodo, datos) => confirmarVenta(metodo, datos)
+  });
 }
 
-function cerrarModalPago() {
-  if (elModalPago) elModalPago.classList.remove('show');
+async function confirmarVenta(metodoPago, datosPago = {}) {
+  // El backend calcula total, costo_total y utilidad a partir de los ítems,
+  // y deja la venta en PENDIENTE si el método es "Por Pagar".
+  const venta = await API.ventas.crear({
+    fecha: elPosFecha?.value || todayISO(),
+    hora: horaActualCorta(),
+    cliente: elPosCliente?.value.trim() || null,
+    metodo_pago: metodoPago,
+    items: cart
+  });
+
+  ultimaVentaRegistrada = venta;
+  showToast(venta.estado === 'PENDIENTE' ? 'Venta registrada como PENDIENTE de pago' : 'Venta registrada con éxito', 'ok');
+
+  cart = [];
+  renderCart();
+  limpiarFormularioItem();
+  if (elPosCliente) elPosCliente.value = '';
+
+  mostrarModalVentaExitosa(venta, datosPago);
+
+  // Impresión directa: el ticket sale apenas se registra la venta.
+  // OJO: el vuelto NO viaja al ticket, solo se muestra en pantalla.
+  imprimirTicketVenta(venta, venta.items);
+
+  if (typeof cargarHistorial === 'function') cargarHistorial();
+  if (typeof cargarProductos === 'function') cargarProductos();
 }
 
-async function confirmarVenta() {
-  const metodoPago = elModalMetodoPago ? elModalMetodoPago.value : '';
-  if (!metodoPago) { showToast('Selecciona un método de pago', 'err'); return; }
+function mostrarModalVentaExitosa(venta, datosPago = {}) {
+  const pendiente = venta.estado === 'PENDIENTE';
 
-  if (elBtnConfirmarPago) elBtnConfirmarPago.disabled = true;
-
-  try {
-    // El backend calcula total, costo_total y utilidad a partir de los ítems.
-    const venta = await API.ventas.crear({
-      fecha: elPosFecha?.value || todayISO(),
-      hora: horaActualCorta(),
-      cliente: elPosCliente?.value.trim() || null,
-      metodo_pago: metodoPago,
-      items: cart
-    });
-
-    ultimaVentaRegistrada = venta;
-    showToast('Venta registrada con éxito', 'ok');
-
-    cart = [];
-    renderCart();
-    limpiarFormularioItem();
-    cerrarModalPago();
-    if (elPosCliente) elPosCliente.value = '';
-
-    mostrarModalVentaExitosa(venta);
-
-    // IMPRESIÓN DIRECTA restaurada: el ticket sale apenas se registra la venta
-    imprimirTicketVenta(venta, venta.items);
-
-    if (typeof cargarHistorial === 'function') cargarHistorial();
-    if (typeof cargarProductos === 'function') cargarProductos();
-
-  } catch (err) {
-    console.error('Error al registrar la venta:', err.message || err);
-    showToast(err.message || 'Error al registrar la venta', 'err');
-  } finally {
-    if (elBtnConfirmarPago) elBtnConfirmarPago.disabled = false;
-  }
-}
-
-function mostrarModalVentaExitosa(venta) {
   if (elVentaExitosaDetalle) {
     const numero = String(venta.numero_orden ?? venta.id).padStart(5, '0');
     elVentaExitosaDetalle.innerHTML = `Orden <b>#${numero}</b> · Total <b>${fmtCLP(venta.total)}</b><br>
-      <span style="color:var(--text-muted); font-size:13px;">${venta.metodo_pago} · ${venta.fecha}${venta.hora ? ' ' + venta.hora : ''}</span>`;
+      <span style="color:var(--text-muted); font-size:13px;">${venta.metodo_pago} · ${venta.fecha}${venta.hora ? ' ' + venta.hora : ''}</span>
+      ${pendiente ? '<br><span class="badge badge-red" style="margin-top:8px; display:inline-block;">PENDIENTE DE PAGO</span>' : ''}`;
   }
+
+  // Vuelto: visible solo en pantalla, nunca en el ticket
+  const hayVuelto = Number(datosPago.vuelto) > 0;
+  if (elVentaExitosaVuelto) elVentaExitosaVuelto.style.display = hayVuelto ? 'flex' : 'none';
+  if (hayVuelto && elVentaExitosaVueltoMonto) elVentaExitosaVueltoMonto.textContent = fmtCLP(datosPago.vuelto);
+
+  if (elVentaExitosaAviso) {
+    elVentaExitosaAviso.textContent = pendiente
+      ? 'No suma a los totales hasta que la cobres desde el Historial.'
+      : 'El ticket de 58 mm se envió a la impresora.';
+  }
+
   if (elModalVentaExitosa) elModalVentaExitosa.classList.add('show');
+}
+
+/* Precarga el POS con el cobro de una orden de trabajo (botón "Cobrar en POS") */
+function precargarVentaDesdeOT(ot) {
+  if (elPosCliente) elPosCliente.value = ot.cliente_nombre || '';
+  if (elItemNombre) elItemNombre.value = `Servicio técnico ${ot.numero_ot} · ${ot.dispositivo_modelo || ''}`.trim();
+  if (elItemCantidad) elItemCantidad.value = 1;
+  if (elItemPrecio) { elItemPrecio.value = ''; elItemPrecio.focus(); }
+  productoSeleccionado = null;
+  actualizarUtilidadPreview();
 }
 
 function cerrarModalVentaExitosa() {

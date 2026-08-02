@@ -16,6 +16,12 @@ let periodoActivo = 'hoy';
 let periodoModal = 'hoy';
 let ventaEditando = null;   // venta abierta en el modal de edición
 let itemsEditando = [];     // copia editable de sus ítems
+let filtroEstado = null;    // null = todas · 'PENDIENTE' = solo por pagar
+
+/* El medio de pago real: si la venta nació "Por Pagar" y luego se cobró,
+   manda el metodo_pago_final. */
+const metodoDeVenta = v => v.metodo_pago_final || v.metodo_pago || 'Sin especificar';
+const estaPendiente = v => (v.estado || 'PAGADA') === 'PENDIENTE';
 
 /* ---------- Referencias del DOM ---------- */
 const elHistorialTableBody = document.getElementById('historialTableBody');
@@ -32,6 +38,11 @@ const elKpiMargen = document.getElementById('kpiMargen');
 const elKpiCosto = document.getElementById('kpiCostoTotal');
 const elKpiTicket = document.getElementById('kpiTicketPromedio');
 const elKpiRangoTexto = document.getElementById('kpiRangoTexto');
+const elKpiPorPagar = document.getElementById('kpiPorPagar');
+const elKpiPorPagarDetalle = document.getElementById('kpiPorPagarDetalle');
+const elKpiPorPagarCard = document.getElementById('kpiPorPagarCard');
+const elHistFiltroEstadoLabel = document.getElementById('histFiltroEstadoLabel');
+const elBtnQuitarFiltroPendientes = document.getElementById('btnQuitarFiltroPendientes');
 const elPayBar = document.getElementById('payBar');
 const elPayLegend = document.getElementById('payLegend');
 
@@ -129,6 +140,18 @@ function setupHistorialEventListeners() {
       marcarChipActivo(elHistChips, 'personalizado');
       cargarHistorial();
     });
+  });
+
+  // Tarjeta "Por Pagar": filtra la tabla por ventas pendientes
+  if (elKpiPorPagarCard) {
+    elKpiPorPagarCard.addEventListener('click', alternarFiltroPendientes);
+    elKpiPorPagarCard.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); alternarFiltroPendientes(); }
+    });
+  }
+  if (elBtnQuitarFiltroPendientes) elBtnQuitarFiltroPendientes.addEventListener('click', () => {
+    filtroEstado = null;
+    aplicarFiltroEstado();
   });
 
   if (elBtnCerrarDetalleVenta) elBtnCerrarDetalleVenta.addEventListener('click', cerrarDetalleVenta);
@@ -320,18 +343,26 @@ async function ejecutarEliminarPorPeriodo(desde, hasta) {
 // ============================================================
 function calcularResumen(ventas) {
   const lista = ventas || [];
-  const total = lista.reduce((a, v) => a + (Number(v.total) || 0), 0);
-  const costo = lista.reduce((a, v) => a + (Number(v.costo_total) || 0), 0);
-  const utilidad = lista.reduce((a, v) => {
+
+  // Las ventas PENDIENTES ("Por Pagar") no suman a ventas, costos ni utilidades:
+  // se contabilizan aparte hasta que se cobran.
+  const cobradas = lista.filter(v => !estaPendiente(v));
+  const pendientes = lista.filter(estaPendiente);
+
+  const total = cobradas.reduce((a, v) => a + (Number(v.total) || 0), 0);
+  const costo = cobradas.reduce((a, v) => a + (Number(v.costo_total) || 0), 0);
+  const utilidad = cobradas.reduce((a, v) => {
     const u = (v.utilidad !== null && v.utilidad !== undefined)
       ? Number(v.utilidad)
       : (Number(v.total) || 0) - (Number(v.costo_total) || 0);
     return a + (u || 0);
   }, 0);
 
+  const totalPendiente = pendientes.reduce((a, v) => a + (Number(v.total) || 0), 0);
+
   const mapa = {};
-  lista.forEach(v => {
-    const metodo = v.metodo_pago || 'Sin especificar';
+  cobradas.forEach(v => {
+    const metodo = metodoDeVenta(v);
     if (!mapa[metodo]) mapa[metodo] = { nombre: metodo, monto: 0, cantidad: 0 };
     mapa[metodo].monto += Number(v.total) || 0;
     mapa[metodo].cantidad += 1;
@@ -341,15 +372,18 @@ function calcularResumen(ventas) {
     .sort((a, b) => b.monto - a.monto)
     .map((m, i) => ({
       ...m,
-      pct: total > 0 ? (m.monto / total) * 100 : (lista.length ? (m.cantidad / lista.length) * 100 : 0),
+      pct: total > 0 ? (m.monto / total) * 100 : (cobradas.length ? (m.cantidad / cobradas.length) * 100 : 0),
       color: colorMedioPago(m.nombre, i)
     }));
 
   return {
-    cantidad: lista.length,
+    cantidad: cobradas.length,
+    cantidadTotal: lista.length,
     total, costo, utilidad,
     margen: total > 0 ? (utilidad / total) * 100 : 0,
-    ticketPromedio: lista.length ? total / lista.length : 0,
+    ticketPromedio: cobradas.length ? total / cobradas.length : 0,
+    totalPendiente,
+    cantidadPendiente: pendientes.length,
     metodos
   };
 }
@@ -383,8 +417,17 @@ function renderResumenHistorial(ventas) {
   animarValor(elKpiCosto, r.costo);
   animarValor(elKpiTicket, r.ticketPromedio);
 
-  if (elKpiCantidad) elKpiCantidad.textContent = `${r.cantidad} ${r.cantidad === 1 ? 'venta registrada' : 'ventas registradas'}`;
+  if (elKpiCantidad) elKpiCantidad.textContent = `${r.cantidad} ${r.cantidad === 1 ? 'venta cobrada' : 'ventas cobradas'}`;
   if (elKpiMargen) elKpiMargen.textContent = `Margen ${r.margen.toFixed(1)}%`;
+
+  // Pendientes de pago (no suman a los totales de arriba)
+  animarValor(elKpiPorPagar, r.totalPendiente);
+  if (elKpiPorPagarDetalle) {
+    elKpiPorPagarDetalle.textContent = r.cantidadPendiente === 0
+      ? 'Sin ventas pendientes'
+      : `${r.cantidadPendiente} ${r.cantidadPendiente === 1 ? 'venta pendiente' : 'ventas pendientes'} · clic para filtrar`;
+  }
+  if (elKpiPorPagarCard) elKpiPorPagarCard.classList.toggle('sin-datos', r.cantidadPendiente === 0);
 
   if (elPayBar) {
     elPayBar.innerHTML = r.metodos.map(m =>
@@ -415,7 +458,8 @@ function obtenerFilasHistorialParaExportar(ventas) {
     Fecha: v.fecha || '',
     Hora: v.hora || '',
     Cliente: v.cliente || 'Consumidor Final',
-    'Método de Pago': v.metodo_pago || '',
+    'Método de Pago': metodoDeVenta(v),
+    Estado: estaPendiente(v) ? 'PENDIENTE' : 'PAGADA',
     Total: Number(v.total) || 0,
     'Costo Total': Number(v.costo_total) || 0,
     Utilidad: Number(v.utilidad) || 0
@@ -437,6 +481,8 @@ function exportarHistorial(formato, ventas, desde, hasta) {
     { Concepto: 'Costo Total', Valor: r.costo },
     { Concepto: 'Utilidad Total', Valor: r.utilidad },
     { Concepto: 'Margen (%)', Valor: Number(r.margen.toFixed(1)) },
+    { Concepto: 'Pendientes por cobrar', Valor: r.totalPendiente },
+    { Concepto: 'Cantidad pendientes', Valor: r.cantidadPendiente },
     { Concepto: '', Valor: '' },
     { Concepto: 'MEDIOS DE PAGO', Valor: '% del período' }
   ].concat(r.metodos.map(m => ({ Concepto: m.nombre, Valor: `${m.pct.toFixed(1)}% (${fmtCLP(m.monto)})` })));
@@ -462,7 +508,7 @@ function exportarHistorialPDF(ventas, desde, hasta) {
 
   doc.setFontSize(9);
   doc.setTextColor(71, 85, 105);
-  doc.text(`Período: ${desde} a ${hasta}   ·   ${r.cantidad} venta(s)   ·   Generado: ${todayISO()}`, 14, 21);
+  doc.text(`Período: ${desde} a ${hasta}   ·   ${r.cantidad} venta(s) cobrada(s)   ·   Generado: ${todayISO()}`, 14, 21);
 
   const anchoUtil = doc.internal.pageSize.getWidth() - 28;
   doc.setDrawColor(203, 213, 225);
@@ -484,18 +530,24 @@ function exportarHistorialPDF(ventas, desde, hasta) {
     : 'Sin registros';
   doc.text(`Medios de pago:  ${desglose}`, 19, 41, { maxWidth: anchoUtil - 10 });
 
+  if (r.cantidadPendiente > 0) {
+    doc.setTextColor(185, 28, 28);
+    doc.text(`Pendientes por cobrar: ${fmtCLP(r.totalPendiente)} en ${r.cantidadPendiente} venta(s) — no incluidas en los totales.`, 19, 46);
+    doc.setTextColor(51, 65, 85);
+  }
+
   doc.autoTable({
     startY: 52,
-    head: [['N° Orden', 'Fecha', 'Hora', 'Cliente', 'Método de Pago', 'Total', 'Costo', 'Utilidad']],
+    head: [['N° Orden', 'Fecha', 'Hora', 'Cliente', 'Método de Pago', 'Estado', 'Total', 'Costo', 'Utilidad']],
     body: filas.map(f => [
-      String(f['N° Orden']).padStart(5, '0'), f.Fecha, f.Hora, f.Cliente, f['Método de Pago'],
+      String(f['N° Orden']).padStart(5, '0'), f.Fecha, f.Hora, f.Cliente, f['Método de Pago'], f.Estado,
       fmtCLP(f.Total), fmtCLP(f['Costo Total']), fmtCLP(f.Utilidad)
     ]),
     styles: { fontSize: 8, cellPadding: 2.5 },
     headStyles: { fillColor: [30, 41, 59], textColor: [248, 250, 252] },
     alternateRowStyles: { fillColor: [248, 250, 252] },
-    columnStyles: { 5: { halign: 'right' }, 6: { halign: 'right' }, 7: { halign: 'right' } },
-    foot: [['', '', '', '', 'TOTALES', fmtCLP(r.total), fmtCLP(r.costo), fmtCLP(r.utilidad)]],
+    columnStyles: { 6: { halign: 'right' }, 7: { halign: 'right' }, 8: { halign: 'right' } },
+    foot: [['', '', '', '', '', 'COBRADAS', fmtCLP(r.total), fmtCLP(r.costo), fmtCLP(r.utilidad)]],
     footStyles: { fillColor: [15, 23, 42], textColor: [251, 191, 36], fontStyle: 'bold', halign: 'right' }
   });
 
@@ -617,32 +669,83 @@ async function cargarHistorial() {
 
 function loadSalesHistory() { return cargarHistorial(); }
 
+function alternarFiltroPendientes() {
+  filtroEstado = filtroEstado === 'PENDIENTE' ? null : 'PENDIENTE';
+  aplicarFiltroEstado();
+}
+
+function aplicarFiltroEstado() {
+  const soloPendientes = filtroEstado === 'PENDIENTE';
+  if (elKpiPorPagarCard) elKpiPorPagarCard.classList.toggle('activo', soloPendientes);
+  if (elBtnQuitarFiltroPendientes) elBtnQuitarFiltroPendientes.classList.toggle('hidden', !soloPendientes);
+  if (elHistFiltroEstadoLabel) {
+    elHistFiltroEstadoLabel.textContent = soloPendientes
+      ? 'Mostrando solo ventas PENDIENTES de pago'
+      : 'Todas las ventas del período';
+  }
+  renderHistorialTabla(salesHistory);
+}
+
+/* Cobra una venta que quedó "Por Pagar" */
+function pagarVentaPendiente(id) {
+  const venta = salesHistory.find(v => String(v.id) === String(id));
+  if (!venta) return;
+
+  abrirSelectorPago({
+    titulo: `Cobrar Orden #${String(venta.numero_orden ?? venta.id).padStart(5, '0')}`,
+    subtitulo: `Cliente: ${venta.cliente || 'Consumidor Final'} · registrada el ${venta.fecha}`,
+    total: Number(venta.total) || 0,
+    // Aquí ya no tiene sentido "Por Pagar"
+    metodos: ['Efectivo', 'Tarjeta Débito', 'Tarjeta Crédito', 'Transferencia'],
+    textoConfirmar: '✅ Registrar Pago',
+    onConfirmar: async (metodo) => {
+      await API.ventas.registrarPago(venta.id, metodo);
+      showToast(`Venta cobrada con ${metodo}`, 'ok');
+      await cargarHistorial();
+    }
+  });
+}
+
 function renderHistorialTabla(ventas) {
   if (!elHistorialTableBody) return;
 
-  if (!ventas || ventas.length === 0) {
-    elHistorialTableBody.innerHTML = '<tr class="empty-row"><td colspan="7">No hay ventas en este período. Prueba con otro filtro o registra una venta nueva.</td></tr>';
+  const lista = (ventas || []).filter(v => !filtroEstado || (v.estado || 'PAGADA') === filtroEstado);
+
+  if (lista.length === 0) {
+    const msg = filtroEstado === 'PENDIENTE'
+      ? 'No hay ventas pendientes de pago en este período.'
+      : 'No hay ventas en este período. Prueba con otro filtro o registra una venta nueva.';
+    elHistorialTableBody.innerHTML = `<tr class="empty-row"><td colspan="8">${msg}</td></tr>`;
     return;
   }
 
-  elHistorialTableBody.innerHTML = ventas.map(v => `
-    <tr class="row-in">
+  elHistorialTableBody.innerHTML = lista.map(v => {
+    const pendiente = estaPendiente(v);
+    return `
+    <tr class="row-in${pendiente ? ' fila-pendiente' : ''}">
       <td class="strong">#${String(v.numero_orden ?? v.id).padStart(5, '0')}</td>
       <td>${v.fecha || '-'}${v.hora ? ' · ' + v.hora : ''}</td>
       <td>${v.cliente || 'Consumidor Final'}</td>
-      <td><span class="badge badge-blue">${v.metodo_pago || '-'}</span></td>
+      <td><span class="badge ${pendiente ? 'badge-gold' : 'badge-blue'}">${metodoDeVenta(v)}</span></td>
+      <td>
+        <span class="badge ${pendiente ? 'badge-red' : 'badge-green'}">${pendiente ? 'PENDIENTE' : 'PAGADA'}</span>
+      </td>
       <td class="num strong">${fmtCLP(v.total)}</td>
-      <td class="num admin-only" style="color:var(--green); font-weight:600;">${fmtCLP(v.utilidad)}</td>
+      <td class="num admin-only" style="color:var(--green); font-weight:600;">${pendiente ? '—' : fmtCLP(v.utilidad)}</td>
       <td>
         <div class="cell-actions">
+          ${pendiente ? `<button class="btn btn-green btn-sm" data-pagar="${v.id}" title="Registrar el pago">💵 Pagar</button>` : ''}
           <button class="btn btn-icon btn-icon-view" data-ver="${v.id}" title="Ver detalle y reimprimir">${ICONO_VER}</button>
           <button class="btn btn-icon btn-icon-edit admin-only" data-editar="${v.id}" title="Editar venta">${ICONO_EDITAR}</button>
           <button class="btn btn-icon btn-icon-del admin-only" data-eliminar="${v.id}" title="Eliminar venta">${ICONO_ELIMINAR}</button>
         </div>
       </td>
-    </tr>
-  `).join('');
+    </tr>`;
+  }).join('');
 
+  elHistorialTableBody.querySelectorAll('button[data-pagar]').forEach(btn => {
+    btn.addEventListener('click', () => pagarVentaPendiente(btn.dataset.pagar));
+  });
   elHistorialTableBody.querySelectorAll('button[data-ver]').forEach(btn => {
     btn.addEventListener('click', () => verDetalleVenta(btn.dataset.ver));
   });
@@ -861,7 +964,9 @@ function renderDetalleVenta(venta) {
       <p><b>Orden:</b> #${String(venta.numero_orden ?? venta.id).padStart(5, '0')}</p>
       <p><b>Fecha:</b> ${venta.fecha || '-'}${venta.hora ? ' · ' + venta.hora : ''}</p>
       <p><b>Cliente:</b> ${venta.cliente || 'Consumidor Final'}</p>
-      <p><b>Pago:</b> ${venta.metodo_pago || '-'}</p>
+      <p><b>Pago:</b> ${metodoDeVenta(venta)}
+        <span class="badge ${estaPendiente(venta) ? 'badge-red' : 'badge-green'}">${estaPendiente(venta) ? 'PENDIENTE' : 'PAGADA'}</span>
+      </p>
     </div>
     <table style="width:100%; border-collapse:collapse;">
       <tbody>${filas}</tbody>

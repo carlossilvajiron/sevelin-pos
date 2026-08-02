@@ -70,6 +70,10 @@ function imprimirTicketVenta(venta, items) {
   aplicarAnchoTicket();
   container.innerHTML = construirTicketHTML(venta, items);
 
+  // La clase indica QUÉ se imprime: ticket de 58 mm u orden de trabajo
+  document.body.classList.remove('print-ot');
+  document.body.classList.add('print-ticket');
+
   // Pequeño respiro para que el navegador pinte el ticket antes del diálogo
   setTimeout(() => window.print(), 120);
 }
@@ -77,5 +81,116 @@ function imprimirTicketVenta(venta, items) {
 function reimprimirTicket(venta, items) {
   imprimirTicketVenta(venta, items);
 }
+
+/* ============================================================
+   ORDEN DE TRABAJO — Copia Cliente + Copia Taller
+   Mantiene el estilo visual de la aplicación y deja el recuadro
+   para la firma manuscrita de conformidad.
+   ============================================================ */
+function filaOT(etiqueta, valor) {
+  if (valor === null || valor === undefined || valor === '' || valor === false) return '';
+  return `<div class="ot-dato"><span>${etiqueta}</span><b>${escaparHTML(valor)}</b></div>`;
+}
+
+function construirComprobanteOT(ot, etiquetaCopia) {
+  const entregado = ot.estado === 'ENTREGADO';
+  const cargador = ot.cargador_deja
+    ? [ot.cargador_tipo, ot.cargador_voltaje ? ot.cargador_voltaje + 'V' : '', ot.cargador_amperaje ? ot.cargador_amperaje + 'A' : '',
+       ot.cargador_cable ? 'con cable' : ''].filter(Boolean).join(' · ') || 'Sí'
+    : 'No deja cargador';
+
+  return `
+    <div class="ot-doc">
+      <div class="ot-doc-head">
+        <div>
+          <h3>${escaparHTML(NEGOCIO_NOMBRE)}</h3>
+          <p>Orden de Trabajo · Servicio Técnico</p>
+        </div>
+        <div class="ot-doc-num">
+          <strong>${escaparHTML(ot.numero_ot || '—')}</strong>
+          <span>${etiquetaCopia}</span>
+        </div>
+      </div>
+
+      <div class="ot-doc-meta">
+        <span>Ingreso: <b>${String(ot.fecha_ingreso || '').slice(0, 16).replace('T', ' ')}</b></span>
+        <span>Estado: <b>${escaparHTML(ot.estado || 'PENDIENTE')}</b></span>
+        ${entregado ? `<span>Entrega: <b>${String(ot.fecha_entrega || '').slice(0, 16).replace('T', ' ')}</b></span>` : ''}
+      </div>
+
+      <div class="ot-doc-grid">
+        <section>
+          <h4>Cliente</h4>
+          ${filaOT('Nombre', ot.cliente_nombre)}
+          ${filaOT('RUT / ID', ot.cliente_rut)}
+          ${filaOT('Teléfono', ot.cliente_telefono)}
+          ${filaOT('Correo', ot.cliente_correo)}
+          ${filaOT('Dirección', ot.cliente_direccion)}
+        </section>
+
+        <section>
+          <h4>Equipo</h4>
+          ${filaOT('Categoría', ot.dispositivo_categoria)}
+          ${filaOT('Modelo', ot.dispositivo_modelo)}
+          ${filaOT('N° de serie', ot.dispositivo_sn)}
+          ${filaOT('Encendido', ot.dispositivo_enciende)}
+          ${filaOT('PIN / Clave', ot.dispositivo_pin)}
+          ${filaOT('Cargador', cargador)}
+          ${filaOT('Accesorios', ot.accesorios)}
+        </section>
+      </div>
+
+      <section class="ot-doc-bloque">
+        <h4>Falla reportada</h4>
+        <p>${escaparHTML(ot.falla_reportada || '—')}</p>
+        ${ot.obs_cliente ? `<h4>Observaciones del cliente</h4><p>${escaparHTML(ot.obs_cliente)}</p>` : ''}
+        ${ot.obs_tecnico ? `<h4>Observaciones del técnico</h4><p>${escaparHTML(ot.obs_tecnico)}</p>` : ''}
+      </section>
+
+      <p class="ot-doc-legal">
+        ${ot.acepta_responsabilidad
+          ? 'El cliente autoriza la revisión del equipo y, de ser necesario, el formateo o reinstalación del sistema. Declara haber respaldado su información. El taller no responde por pérdida de datos ni por fallas ocultas preexistentes. Equipos no retirados dentro de 90 días quedan sujetos a costo de bodegaje.'
+          : 'El cliente NO autorizó formateo ni reinstalación del sistema.'}
+      </p>
+
+      <div class="ot-doc-firmas">
+        <div class="ot-firma-box">
+          ${ot.retira_firma_base64
+            ? `<img src="${ot.retira_firma_base64}" alt="Firma de conformidad">`
+            : '<span class="ot-firma-vacia"></span>'}
+          <span class="ot-firma-linea"></span>
+          <small>Firma de conformidad del cliente</small>
+          ${ot.retira_nombre ? `<small><b>${escaparHTML(ot.retira_nombre)}</b>${ot.retira_rut ? ' · ' + escaparHTML(ot.retira_rut) : ''}</small>` : ''}
+        </div>
+        <div class="ot-firma-box">
+          <span class="ot-firma-vacia"></span>
+          <span class="ot-firma-linea"></span>
+          <small>Recepción / Técnico responsable</small>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function imprimirOrdenTrabajo(ot) {
+  const area = document.getElementById('otPrintArea');
+  if (!area) return;
+
+  area.innerHTML = `
+    ${construirComprobanteOT(ot, 'COPIA CLIENTE')}
+    <div class="ot-corte">—————————————  corte aquí  —————————————</div>
+    ${construirComprobanteOT(ot, 'COPIA TALLER')}
+  `;
+
+  document.body.classList.remove('print-ticket');
+  document.body.classList.add('print-ot');
+
+  setTimeout(() => window.print(), 150);
+}
+
+/* Al cerrar el diálogo de impresión se limpian los modos */
+window.addEventListener('afterprint', () => {
+  document.body.classList.remove('print-ticket', 'print-ot');
+});
 
 document.addEventListener('DOMContentLoaded', aplicarAnchoTicket);

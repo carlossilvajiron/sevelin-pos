@@ -8,10 +8,7 @@
 </head>
 <body>
 
-  <!-- ============================================================
-       MODAL DE ACCESO (PIN). Se muestra al cargar si no hay sesión.
-       La sesión vive en sessionStorage: se pierde al cerrar la pestaña.
-       ============================================================ -->
+  <!-- ============ MODAL DE ACCESO (PIN) ============ -->
   <div id="modalLogin" class="modal-overlay modal-login-overlay">
     <div class="modal-box modal-login">
       <div class="login-brand">
@@ -33,7 +30,7 @@
     </div>
   </div>
 
-  <!-- Navegación Principal -->
+  <!-- ============ CABECERA ============ -->
   <header class="app-header">
     <div class="logo">
       <h1>SEVELIN <span>POS</span></h1>
@@ -43,18 +40,22 @@
 
     <div class="header-right">
       <nav class="nav-links">
-        <button class="nav-btn active" data-view="view-pos">🛒 POS / Ventas</button>
-        <button class="nav-btn admin-only" data-view="view-productos">📦 Productos</button>
+        <button class="nav-btn active" data-view="view-pos">🛒 POS</button>
         <button class="nav-btn" data-view="view-historial">📋 Historial</button>
+        <button class="nav-btn" data-view="view-taller">🔧 Servicio Técnico</button>
+        <button class="nav-btn admin-only" data-view="view-productos">📦 Productos</button>
+        <button class="nav-btn admin-only" data-view="view-compras">🧾 Compras</button>
       </nav>
       <button class="theme-toggle" id="btnTema" title="Cambiar tema" aria-label="Cambiar tema">🌙</button>
-      <button class="btn btn-outline btn-sm" id="btnLogout" title="Cerrar sesión">🚪 Cerrar Sesión</button>
+      <button class="btn btn-outline btn-sm" id="btnLogout" title="Cerrar sesión">🚪 Salir</button>
     </div>
   </header>
 
   <main class="app-content">
 
-    <!-- VISTA 1: POS / VENTAS -->
+    <!-- ============================================================
+         VISTA 1: POS / VENTAS
+         ============================================================ -->
     <section id="view-pos" class="view-section active">
       <div class="pos-stack">
 
@@ -76,7 +77,6 @@
               <label>Cantidad *</label>
               <input type="number" id="itemCantidad" min="1" value="1">
             </div>
-            <!-- El costo solo lo ve y edita el administrador -->
             <div class="field pos-entry-sm admin-only">
               <label>Costo Unit. ($)</label>
               <input type="number" id="itemCosto" min="0" step="1" placeholder="0">
@@ -93,7 +93,10 @@
             </div>
             <div class="pos-entry-btn">
               <label class="field-ghost-label">&nbsp;</label>
-              <button class="btn btn-primary" id="btnAgregarItem">➕ Agregar</button>
+              <div class="toolbar-group">
+                <button class="btn btn-primary" id="btnAgregarItem">➕ Agregar</button>
+                <button class="btn btn-outline" id="btnLimpiarSeleccion" title="Vacía solo los campos de arriba; el carrito no se toca">🧹 Limpiar Selección</button>
+              </div>
             </div>
           </div>
 
@@ -147,7 +150,315 @@
       </div>
     </section>
 
-    <!-- VISTA 2: PRODUCTOS (solo admin) -->
+    <!-- ============================================================
+         VISTA 2: HISTORIAL DE VENTAS
+         ============================================================ -->
+    <section id="view-historial" class="view-section">
+
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <h2>Historial de Ventas</h2>
+            <p class="subtitle" id="histPeriodoLabel">Mostrando las ventas de hoy</p>
+          </div>
+          <div class="chip-group" id="histChips">
+            <button class="chip active" data-periodo="hoy">Hoy</button>
+            <button class="chip" data-periodo="semana">Esta Semana</button>
+            <button class="chip" data-periodo="mes">Este Mes</button>
+            <button class="chip" data-periodo="anio">Este Año</button>
+            <button class="chip" data-periodo="personalizado">📅 Personalizado</button>
+          </div>
+        </div>
+
+        <div class="toolbar-row" id="histRangoRow">
+          <div class="field" style="max-width:260px;">
+            <label>Desde</label>
+            <input type="date" id="histFechaDesde">
+          </div>
+          <div class="field" style="max-width:260px;">
+            <label>Hasta</label>
+            <input type="date" id="histFechaHasta">
+          </div>
+          <div class="field" style="flex:0 0 auto; max-width:220px;">
+            <label class="field-ghost-label">Buscar</label>
+            <button class="btn btn-primary" id="btnFiltrarHistorial">🔍 Buscar Ventas</button>
+          </div>
+        </div>
+
+        <div class="kpi-grid">
+          <div class="kpi-card kpi-blue">
+            <div class="kpi-label">💰 Ventas Totales</div>
+            <div class="kpi-value" id="kpiVentasTotales">$0</div>
+            <div class="kpi-foot" id="kpiCantidadVentas">0 ventas cobradas</div>
+          </div>
+          <div class="kpi-card kpi-green admin-only">
+            <div class="kpi-label">📈 Utilidad Total</div>
+            <div class="kpi-value" id="kpiUtilidadTotal">$0</div>
+            <div class="kpi-foot" id="kpiMargen">Margen 0%</div>
+          </div>
+          <div class="kpi-card kpi-gold admin-only">
+            <div class="kpi-label">📦 Costo Total</div>
+            <div class="kpi-value" id="kpiCostoTotal">$0</div>
+            <div class="kpi-foot">Costo de lo vendido</div>
+          </div>
+          <!-- Tarjeta clicable: filtra la tabla por ventas pendientes -->
+          <div class="kpi-card kpi-red kpi-clickable" id="kpiPorPagarCard" role="button" tabindex="0"
+               title="Ver solo las ventas pendientes de pago">
+            <div class="kpi-label">⏳ Por Pagar</div>
+            <div class="kpi-value" id="kpiPorPagar">$0</div>
+            <div class="kpi-foot" id="kpiPorPagarDetalle">0 ventas pendientes · clic para filtrar</div>
+          </div>
+          <div class="kpi-card kpi-violet">
+            <div class="kpi-label">🧾 Ticket Promedio</div>
+            <div class="kpi-value" id="kpiTicketPromedio">$0</div>
+            <div class="kpi-foot" id="kpiRangoTexto">—</div>
+          </div>
+        </div>
+
+        <div class="pay-panel">
+          <span class="section-label">Medios de pago del período (solo ventas cobradas)</span>
+          <div class="pay-bar" id="payBar"></div>
+          <div class="pay-legend" id="payLegend">
+            <span class="pay-item" style="color:var(--text-muted);">Sin ventas en el período</span>
+          </div>
+        </div>
+
+        <div class="toolbar-bar admin-only">
+          <div class="toolbar-group">
+            <button class="btn btn-outline btn-sm" id="btnExportarHistorialExcel">📊 Exportar Excel</button>
+            <button class="btn btn-outline btn-sm" id="btnExportarHistorialPDF">🧾 Exportar PDF</button>
+            <input type="file" id="inputImportarVentas" accept=".csv,.xlsx,.xls" style="display:none;">
+            <button class="btn btn-outline btn-sm" id="btnImportarVentas">📥 Importar Ventas</button>
+          </div>
+          <div class="toolbar-group">
+            <button class="btn btn-red btn-sm" id="btnEliminarPorPeriodo">🗓️ Eliminar por Período</button>
+            <button class="btn btn-red btn-sm" id="btnEliminarHistorialCompleto">🗑️ Eliminar Todo</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head" style="margin-bottom:12px;">
+          <span class="section-label" style="margin:0;" id="histFiltroEstadoLabel">Todas las ventas del período</span>
+          <button class="btn btn-outline btn-sm hidden" id="btnQuitarFiltroPendientes">✖ Quitar filtro de pendientes</button>
+        </div>
+        <div class="table-wrapper">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th># Orden</th>
+                <th>Fecha / Hora</th>
+                <th>Cliente</th>
+                <th>Medio Pago</th>
+                <th>Estado</th>
+                <th class="num">Total</th>
+                <th class="num admin-only">Utilidad</th>
+                <th style="text-align:right;">Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="historialTableBody">
+              <tr class="empty-row"><td colspan="8">Cargando ventas...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================
+         VISTA 3: SERVICIO TÉCNICO (Check-In / Check-Out)
+         ============================================================ -->
+    <section id="view-taller" class="view-section">
+
+      <!-- Wizard de Check-In -->
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <h2>Check-In de Equipo</h2>
+            <p class="subtitle">Recepción en 3 pasos. El comprobante se imprime solo si lo necesitas.</p>
+          </div>
+          <div class="wizard-steps" id="wizardSteps">
+            <div class="wizard-step active" data-paso="1"><span>1</span> Cliente</div>
+            <div class="wizard-step" data-paso="2"><span>2</span> Equipo</div>
+            <div class="wizard-step" data-paso="3"><span>3</span> Diagnóstico</div>
+          </div>
+        </div>
+
+        <!-- Paso 1: Cliente -->
+        <div class="wizard-panel active" data-paso="1">
+          <div class="grid grid-2">
+            <div class="field">
+              <label>RUT / ID del cliente</label>
+              <input type="text" id="otClienteRut" placeholder="12.345.678-9">
+            </div>
+            <div class="field">
+              <label>Nombre y apellidos *</label>
+              <input type="text" id="otClienteNombre" placeholder="Nombre completo">
+            </div>
+            <div class="field">
+              <label>Teléfono</label>
+              <input type="tel" id="otClienteTelefono" placeholder="+56 9 ...">
+            </div>
+            <div class="field">
+              <label>Correo</label>
+              <input type="email" id="otClienteCorreo" placeholder="cliente@correo.cl">
+            </div>
+          </div>
+          <div class="field" style="margin-top:12px;">
+            <label>Dirección</label>
+            <input type="text" id="otClienteDireccion" placeholder="Calle, número, comuna">
+          </div>
+        </div>
+
+        <!-- Paso 2: Equipo -->
+        <div class="wizard-panel" data-paso="2">
+          <div class="grid grid-3">
+            <div class="field">
+              <label>Categoría</label>
+              <select id="otDispositivoCategoria">
+                <option value="Notebook">Notebook</option>
+                <option value="PC de Escritorio">PC de Escritorio</option>
+                <option value="Impresora">Impresora</option>
+                <option value="Celular">Celular</option>
+                <option value="Tablet">Tablet</option>
+                <option value="Consola">Consola</option>
+                <option value="Otro">Otro</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Modelo / Subcategoría *</label>
+              <input type="text" id="otDispositivoModelo" placeholder="Ej: Lenovo IdeaPad 3">
+            </div>
+            <div class="field">
+              <label>N° de Serie</label>
+              <input type="text" id="otDispositivoSN" placeholder="S/N del equipo">
+            </div>
+            <div class="field">
+              <label>Estado de encendido</label>
+              <select id="otDispositivoEnciende">
+                <option value="Enciende">Enciende</option>
+                <option value="No enciende">No enciende</option>
+                <option value="Enciende con fallas">Enciende con fallas</option>
+                <option value="No se pudo verificar">No se pudo verificar</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>PIN / Contraseña</label>
+              <input type="text" id="otDispositivoPin" placeholder="Clave de desbloqueo">
+            </div>
+            <div class="field">
+              <label class="field-ghost-label">Cargador</label>
+              <label class="sn-toggle">
+                <input type="checkbox" id="otCargadorDeja"> Deja cargador
+              </label>
+            </div>
+          </div>
+
+          <div class="grid grid-4" id="otCargadorDatos" style="margin-top:12px; display:none;">
+            <div class="field">
+              <label>Tipo de cargador</label>
+              <input type="text" id="otCargadorTipo" placeholder="Original / genérico">
+            </div>
+            <div class="field">
+              <label>Voltaje (V)</label>
+              <input type="number" id="otCargadorVoltaje" step="0.1" min="0">
+            </div>
+            <div class="field">
+              <label>Amperaje (A)</label>
+              <input type="number" id="otCargadorAmperaje" step="0.1" min="0">
+            </div>
+            <div class="field">
+              <label class="field-ghost-label">Cable</label>
+              <label class="sn-toggle">
+                <input type="checkbox" id="otCargadorCable"> Incluye cable
+              </label>
+            </div>
+          </div>
+
+          <div class="field" style="margin-top:12px;">
+            <label>Accesorios que deja</label>
+            <input type="text" id="otAccesorios" placeholder="Funda, mouse, bolso, etc.">
+          </div>
+        </div>
+
+        <!-- Paso 3: Diagnóstico -->
+        <div class="wizard-panel" data-paso="3">
+          <div class="field">
+            <label>Falla reportada *</label>
+            <textarea id="otFallaReportada" rows="3" placeholder="Qué le pasa al equipo según el cliente"></textarea>
+          </div>
+          <div class="grid grid-2" style="margin-top:12px;">
+            <div class="field">
+              <label>Observaciones del cliente</label>
+              <textarea id="otObsCliente" rows="3" placeholder="Golpes, rayas, humedad, intervenciones previas..."></textarea>
+            </div>
+            <div class="field">
+              <label>Observaciones del técnico</label>
+              <textarea id="otObsTecnico" rows="3" placeholder="Estado visual, revisión inicial..."></textarea>
+            </div>
+          </div>
+          <div style="margin-top:16px;">
+            <label class="sn-toggle" style="width:fit-content;">
+              <input type="checkbox" id="otAceptaResponsabilidad" checked>
+              El cliente acepta las condiciones de servicio y autoriza formateo si es necesario
+            </label>
+          </div>
+        </div>
+
+        <div class="wizard-foot">
+          <button class="btn btn-ghost" id="btnOtAnterior" style="display:none;">← Anterior</button>
+          <div class="toolbar-group" style="margin-left:auto;">
+            <button class="btn btn-outline" id="btnOtLimpiar">🧹 Limpiar formulario</button>
+            <button class="btn btn-primary" id="btnOtSiguiente">Siguiente →</button>
+            <button class="btn btn-green" id="btnOtGuardar" style="display:none;">✅ Registrar Check-In</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Panel de órdenes -->
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <h2>Órdenes de Trabajo</h2>
+            <p class="subtitle" id="otResumenLabel">—</p>
+          </div>
+          <div class="chip-group" id="otChips">
+            <button class="chip active" data-estado="PENDIENTE">Pendientes</button>
+            <button class="chip" data-estado="ENTREGADO">Entregadas</button>
+            <button class="chip" data-estado="">Todas</button>
+          </div>
+        </div>
+
+        <div class="toolbar-row">
+          <div class="field">
+            <input type="text" id="otBuscar" placeholder="Buscar por OT, cliente, RUT, modelo o S/N...">
+          </div>
+          <button class="btn btn-outline btn-sm" id="btnOtRecargar">🔄 Actualizar</button>
+        </div>
+
+        <div class="table-wrapper">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>N° OT</th>
+                <th>Ingreso</th>
+                <th>Cliente</th>
+                <th>Equipo</th>
+                <th>Falla</th>
+                <th>Estado</th>
+                <th style="text-align:right;">Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="otTableBody">
+              <tr class="empty-row"><td colspan="7">Cargando órdenes...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================
+         VISTA 4: PRODUCTOS (solo admin)
+         ============================================================ -->
     <section id="view-productos" class="view-section admin-only">
       <div class="card">
         <div class="card-head">
@@ -209,101 +520,83 @@
       </div>
     </section>
 
-    <!-- VISTA 3: HISTORIAL DE VENTAS -->
-    <section id="view-historial" class="view-section">
-
+    <!-- ============================================================
+         VISTA 5: COMPRAS Y GASTOS (solo admin)
+         ============================================================ -->
+    <section id="view-compras" class="view-section admin-only">
       <div class="card">
         <div class="card-head">
           <div>
-            <h2>Historial de Ventas</h2>
-            <p class="subtitle" id="histPeriodoLabel">Mostrando las ventas de hoy</p>
+            <h2>Compras y Gastos</h2>
+            <p class="subtitle" id="comprasPeriodoLabel">Registro de mercadería, activos, insumos y gastos operativos.</p>
           </div>
-          <div class="chip-group" id="histChips">
-            <button class="chip active" data-periodo="hoy">Hoy</button>
-            <button class="chip" data-periodo="semana">Esta Semana</button>
-            <button class="chip" data-periodo="mes">Este Mes</button>
-            <button class="chip" data-periodo="anio">Este Año</button>
-            <button class="chip" data-periodo="personalizado">📅 Personalizado</button>
-          </div>
-        </div>
-
-        <div class="toolbar-row" id="histRangoRow">
-          <div class="field" style="max-width:260px;">
-            <label>Desde</label>
-            <input type="date" id="histFechaDesde">
-          </div>
-          <div class="field" style="max-width:260px;">
-            <label>Hasta</label>
-            <input type="date" id="histFechaHasta">
-          </div>
-          <div class="field" style="flex:0 0 auto; max-width:220px;">
-            <label class="field-ghost-label">Buscar</label>
-            <button class="btn btn-primary" id="btnFiltrarHistorial">🔍 Buscar Ventas</button>
-          </div>
+          <button class="btn btn-primary" id="btnNuevaCompra">➕ Registrar Compra</button>
         </div>
 
         <div class="kpi-grid">
+          <div class="kpi-card kpi-gold">
+            <div class="kpi-label">🗓️ Gasto del Mes Actual</div>
+            <div class="kpi-value" id="kpiComprasMes">$0</div>
+            <div class="kpi-foot" id="kpiComprasMesDetalle">0 compras este mes</div>
+          </div>
           <div class="kpi-card kpi-blue">
-            <div class="kpi-label">💰 Ventas Totales</div>
-            <div class="kpi-value" id="kpiVentasTotales">$0</div>
-            <div class="kpi-foot" id="kpiCantidadVentas">0 ventas registradas</div>
+            <div class="kpi-label">📊 Total del Filtro</div>
+            <div class="kpi-value" id="kpiComprasFiltro">$0</div>
+            <div class="kpi-foot" id="kpiComprasFiltroDetalle">0 registros</div>
           </div>
-          <!-- Utilidad y costo: solo administrador -->
-          <div class="kpi-card kpi-green admin-only">
-            <div class="kpi-label">📈 Utilidad Total</div>
-            <div class="kpi-value" id="kpiUtilidadTotal">$0</div>
-            <div class="kpi-foot" id="kpiMargen">Margen 0%</div>
-          </div>
-          <div class="kpi-card kpi-gold admin-only">
-            <div class="kpi-label">📦 Costo Total</div>
-            <div class="kpi-value" id="kpiCostoTotal">$0</div>
-            <div class="kpi-foot">Costo de lo vendido</div>
-          </div>
-          <div class="kpi-card kpi-violet">
-            <div class="kpi-label">🧾 Ticket Promedio</div>
-            <div class="kpi-value" id="kpiTicketPromedio">$0</div>
-            <div class="kpi-foot" id="kpiRangoTexto">—</div>
+          <div class="kpi-card kpi-red">
+            <div class="kpi-label">📄 Sin Documentos</div>
+            <div class="kpi-value" id="kpiComprasSinDoc">0</div>
+            <div class="kpi-foot">Compras sin factura o sin comprobante</div>
           </div>
         </div>
 
-        <div class="pay-panel">
-          <span class="section-label">Medios de pago del período</span>
-          <div class="pay-bar" id="payBar"></div>
-          <div class="pay-legend" id="payLegend">
-            <span class="pay-item" style="color:var(--text-muted);">Sin ventas en el período</span>
+        <div class="toolbar-row">
+          <div class="field" style="max-width:220px;">
+            <label>Desde</label>
+            <input type="date" id="comprasDesde">
+          </div>
+          <div class="field" style="max-width:220px;">
+            <label>Hasta</label>
+            <input type="date" id="comprasHasta">
+          </div>
+          <div class="field" style="min-width:260px;">
+            <label>Clasificación</label>
+            <select id="comprasClasificacionFiltro">
+              <option value="">Todas las clasificaciones</option>
+              <option value="Mercadería / Productos para Reventa">Mercadería / Productos para Reventa</option>
+              <option value="Activo Fijo (Maquinaria, Herramientas, Equipamiento)">Activo Fijo (Maquinaria, Herramientas, Equipamiento)</option>
+              <option value="Insumos / Consumibles Taller">Insumos / Consumibles Taller</option>
+              <option value="Gastos Operativos (Servicios, Arriendo, etc.)">Gastos Operativos (Servicios, Arriendo, etc.)</option>
+            </select>
+          </div>
+          <div class="field" style="flex:0 0 auto;">
+            <label class="field-ghost-label">Buscar</label>
+            <button class="btn btn-primary" id="btnFiltrarCompras">🔍 Filtrar</button>
           </div>
         </div>
 
-        <div class="toolbar-bar admin-only">
-          <div class="toolbar-group">
-            <button class="btn btn-outline btn-sm" id="btnExportarHistorialExcel">📊 Exportar Excel</button>
-            <button class="btn btn-outline btn-sm" id="btnExportarHistorialPDF">🧾 Exportar PDF</button>
-            <input type="file" id="inputImportarVentas" accept=".csv,.xlsx,.xls" style="display:none;">
-            <button class="btn btn-outline btn-sm" id="btnImportarVentas">📥 Importar Ventas</button>
-          </div>
-          <div class="toolbar-group">
-            <button class="btn btn-red btn-sm" id="btnEliminarPorPeriodo">🗓️ Eliminar por Período</button>
-            <button class="btn btn-red btn-sm" id="btnEliminarHistorialCompleto">🗑️ Eliminar Todo</button>
-          </div>
+        <div class="chip-group" id="comprasChipsDocs" style="margin-bottom:16px;">
+          <button class="chip active" data-doc="">Todas</button>
+          <button class="chip" data-doc="sin_documento">Sin Factura / Boleta</button>
+          <button class="chip" data-doc="sin_comprobante">Sin Comprobante de Pago</button>
         </div>
-      </div>
 
-      <div class="card">
         <div class="table-wrapper">
           <table class="data-table">
             <thead>
               <tr>
-                <th># Orden</th>
-                <th>Fecha / Hora</th>
-                <th>Cliente</th>
-                <th>Medio Pago</th>
-                <th class="num">Total</th>
-                <th class="num admin-only">Utilidad</th>
+                <th>Fecha</th>
+                <th>Proveedor</th>
+                <th>Clasificación</th>
+                <th class="num">Costo</th>
+                <th>Factura</th>
+                <th>Comprobante</th>
                 <th style="text-align:right;">Acciones</th>
               </tr>
             </thead>
-            <tbody id="historialTableBody">
-              <tr class="empty-row"><td colspan="7">Cargando ventas...</td></tr>
+            <tbody id="comprasTableBody">
+              <tr class="empty-row"><td colspan="7">Cargando compras...</td></tr>
             </tbody>
           </table>
         </div>
@@ -312,22 +605,33 @@
 
   </main>
 
-  <!-- MODAL: CONFIRMAR PAGO -->
+  <!-- ============================================================
+       MODAL: SELECTOR DE PAGO (venta nueva y cobro de pendientes)
+       ============================================================ -->
   <div id="modalPago" class="modal-overlay">
-    <div class="modal-box" style="max-width: 440px;">
-      <h2>Confirmar Pago</h2>
-      <p class="modal-hint">Selecciona el método de pago para procesar la transacción.</p>
+    <div class="modal-box" style="max-width: 540px;">
+      <h2 id="pagoTitulo">Confirmar Pago</h2>
+      <p class="modal-hint" id="pagoSubtitulo">Selecciona el medio de pago.</p>
 
-      <div class="field" style="margin: 18px 0;">
-        <label>Método de Pago *</label>
-        <select id="modalMetodoPago">
-          <option value="">Seleccionar...</option>
-          <option value="Efectivo">Efectivo</option>
-          <option value="Transferencia">Transferencia</option>
-          <option value="Tarjeta Débito">Tarjeta Débito</option>
-          <option value="Tarjeta Crédito">Tarjeta Crédito</option>
-          <option value="Por Pagar">Por Pagar</option>
-        </select>
+      <div class="pago-total">
+        <span>Total a pagar</span>
+        <strong id="pagoTotal">$0</strong>
+      </div>
+
+      <div class="pago-metodos" id="pagoMetodos"></div>
+
+      <!-- Calculadora de vuelto: aparece solo con Efectivo -->
+      <div class="pago-efectivo" id="pagoEfectivoBox" style="display:none;">
+        <div class="field">
+          <label>Monto recibido</label>
+          <input type="number" id="pagoMontoRecibido" min="0" step="100" placeholder="0" inputmode="numeric">
+        </div>
+        <div class="pago-vuelto" id="pagoVueltoBox">
+          <span>Vuelto</span>
+          <strong id="pagoVuelto">$0</strong>
+        </div>
+        <div class="pago-rapido" id="pagoSugerencias"></div>
+        <p class="modal-hint" id="pagoAviso">El vuelto es solo referencial: no se imprime en el ticket.</p>
       </div>
 
       <div class="modal-foot">
@@ -337,13 +641,17 @@
     </div>
   </div>
 
-  <!-- MODAL: VENTA REGISTRADA (con reimpresión inmediata) -->
+  <!-- MODAL: VENTA REGISTRADA -->
   <div id="modalVentaExitosa" class="modal-overlay">
-    <div class="modal-box modal-centro" style="max-width: 440px;">
+    <div class="modal-box modal-centro" style="max-width: 460px;">
       <div class="icon-success">🎉</div>
       <h2>¡Venta registrada!</h2>
       <p id="ventaExitosaDetalle" class="modal-hint">Orden #000 · Total $0</p>
-      <p class="modal-hint">El ticket de 58 mm se envió a la impresora.</p>
+      <div id="ventaExitosaVuelto" class="pago-vuelto" style="display:none;">
+        <span>Vuelto a entregar</span>
+        <strong id="ventaExitosaVueltoMonto">$0</strong>
+      </div>
+      <p class="modal-hint" id="ventaExitosaAviso">El ticket de 58 mm se envió a la impresora.</p>
       <div class="modal-foot" style="justify-content:center;">
         <button class="btn btn-primary" id="btnPrintTicketVenta">🖨️ Imprimir de nuevo</button>
         <button class="btn btn-ghost" id="btnCloseVentaExitosa">Cerrar</button>
@@ -351,7 +659,7 @@
     </div>
   </div>
 
-  <!-- MODAL: NUEVO / EDITAR PRODUCTO (campos Tiendanube) -->
+  <!-- MODAL: NUEVO / EDITAR PRODUCTO -->
   <div id="modalProducto" class="modal-overlay">
     <div class="modal-box modal-lg">
       <h2 id="productoFormTitle">Nuevo Producto</h2>
@@ -477,7 +785,7 @@
     </div>
   </div>
 
-  <!-- MODAL: EDITAR VENTA (cabecera + ítems, solo admin) -->
+  <!-- MODAL: EDITAR VENTA -->
   <div id="modalEditarVenta" class="modal-overlay">
     <div class="modal-box modal-lg">
       <h2>✏️ Editar Venta #<span id="editVentaNumero">00000</span></h2>
@@ -523,13 +831,125 @@
     </div>
   </div>
 
-  <!-- Contenedor usado SOLO para imprimir el ticket (ver print.js) -->
-  <div id="ticketContainer"></div>
+  <!-- MODAL: REGISTRAR COMPRA -->
+  <div id="modalCompra" class="modal-overlay">
+    <div class="modal-box modal-lg">
+      <h2 id="compraFormTitle">Registrar Compra</h2>
+      <p class="modal-hint">Adjunta la factura y el comprobante para dejar el gasto respaldado.</p>
+      <input type="hidden" id="compraEditId">
 
-  <!-- Notificación flotante -->
+      <div class="grid grid-2" style="margin-top:18px;">
+        <div class="field">
+          <label>Fecha *</label>
+          <input type="date" id="compraFecha">
+        </div>
+        <div class="field">
+          <label>Proveedor</label>
+          <input type="text" id="compraProveedor" placeholder="Nombre del proveedor">
+        </div>
+      </div>
+
+      <div class="field" style="margin-top:12px;">
+        <label>Clasificación *</label>
+        <select id="compraClasificacion">
+          <option value="Mercadería / Productos para Reventa">Mercadería / Productos para Reventa</option>
+          <option value="Activo Fijo (Maquinaria, Herramientas, Equipamiento)">Activo Fijo (Maquinaria, Herramientas, Equipamiento)</option>
+          <option value="Insumos / Consumibles Taller">Insumos / Consumibles Taller</option>
+          <option value="Gastos Operativos (Servicios, Arriendo, etc.)">Gastos Operativos (Servicios, Arriendo, etc.)</option>
+        </select>
+      </div>
+
+      <div class="grid grid-2" style="margin-top:12px;">
+        <div class="field">
+          <label>Costo Total ($) *</label>
+          <input type="number" id="compraCosto" min="0" step="1" placeholder="0">
+        </div>
+        <div class="field">
+          <label>Detalle (opcional)</label>
+          <input type="text" id="compraDescripcion" placeholder="Qué se compró">
+        </div>
+      </div>
+
+      <span class="section-label" style="margin-top:20px;">Documentos</span>
+      <div class="grid grid-2">
+        <div class="doc-slot">
+          <label class="doc-titulo">📄 Factura / Boleta</label>
+          <input type="file" id="compraArchivoDocumento" accept="image/*,application/pdf" style="display:none;">
+          <div class="toolbar-group">
+            <button class="btn btn-outline btn-sm" id="btnSubirDocumento">📎 Subir archivo</button>
+            <span class="doc-estado" id="estadoDocumento">Sin archivo</span>
+          </div>
+          <input type="url" id="compraUrlDocumento" placeholder="…o pega una URL externa">
+        </div>
+        <div class="doc-slot">
+          <label class="doc-titulo">💳 Comprobante de Pago</label>
+          <input type="file" id="compraArchivoComprobante" accept="image/*,application/pdf" style="display:none;">
+          <div class="toolbar-group">
+            <button class="btn btn-outline btn-sm" id="btnSubirComprobante">📎 Subir archivo</button>
+            <span class="doc-estado" id="estadoComprobante">Sin archivo</span>
+          </div>
+          <input type="url" id="compraUrlComprobante" placeholder="…o pega una URL externa">
+        </div>
+      </div>
+
+      <div class="modal-foot">
+        <button class="btn btn-ghost" id="btnCancelarCompra">Cancelar</button>
+        <button class="btn btn-primary" id="btnGuardarCompra">Guardar Compra</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: VISTA PREVIA DE LA ORDEN DE TRABAJO -->
+  <div id="modalOtPreview" class="modal-overlay">
+    <div class="modal-box modal-lg">
+      <h2 id="otPreviewTitulo">Orden de Trabajo</h2>
+      <p class="modal-hint">Imprimir es opcional: la orden ya quedó registrada.</p>
+      <div id="otPreviewContenido" class="ot-preview"></div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" id="btnCerrarOtPreview">Cerrar</button>
+        <button class="btn btn-primary" id="btnImprimirOt">🖨️ Imprimir (Cliente + Taller)</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: CHECK-OUT / ENTREGA -->
+  <div id="modalOtEntrega" class="modal-overlay">
+    <div class="modal-box" style="max-width: 560px;">
+      <h2>📦 Entregar Equipo</h2>
+      <p class="modal-hint" id="otEntregaResumen">Orden —</p>
+      <input type="hidden" id="otEntregaId">
+
+      <div class="grid grid-2" style="margin-top:18px;">
+        <div class="field">
+          <label>Nombre de quien retira</label>
+          <input type="text" id="otRetiraNombre" placeholder="Opcional">
+        </div>
+        <div class="field">
+          <label>RUT de quien retira</label>
+          <input type="text" id="otRetiraRut" placeholder="Opcional">
+        </div>
+      </div>
+
+      <span class="section-label" style="margin-top:18px;">Firma de conformidad (opcional)</span>
+      <div class="firma-wrap">
+        <canvas id="otFirmaCanvas" class="firma-canvas" width="520" height="180"></canvas>
+        <button class="btn btn-outline btn-sm" id="btnLimpiarFirma">🧹 Borrar firma</button>
+      </div>
+
+      <div class="modal-foot">
+        <button class="btn btn-ghost" id="btnCancelarOtEntrega">Cancelar</button>
+        <button class="btn btn-green" id="btnConfirmarOtEntrega">✅ Confirmar Entrega</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Áreas de impresión -->
+  <div id="ticketContainer"></div>
+  <div id="otPrintArea"></div>
+
   <div id="toast" class="toast"></div>
 
-  <!-- Librerías de exportación (Supabase ya NO se carga en el navegador) -->
+  <!-- Librerías de exportación -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
@@ -538,8 +958,11 @@
   <script src="js/api.js"></script>
   <script src="js/config.js"></script>
   <script src="js/auth.js"></script>
+  <script src="js/pago.js"></script>
   <script src="js/productos.js"></script>
   <script src="js/historial.js"></script>
+  <script src="js/compras.js"></script>
+  <script src="js/ot.js"></script>
   <script src="js/pos.js"></script>
   <script src="js/print.js"></script>
 

@@ -49,7 +49,9 @@ const db = createClient(SUPABASE_URL || 'http://localhost', SUPABASE_SERVICE_ROL
 
 /* ---------- Middlewares base ---------- */
 app.use(helmet({ contentSecurityPolicy: false, crossOriginResourcePolicy: { policy: 'cross-origin' } }));
-app.use(express.json({ limit: '2mb' }));
+// 6 MB: los documentos de compras viajan en base64 dentro del JSON.
+// (Vercel corta las peticiones sobre ~4.5 MB, por eso el front limita a 4 MB.)
+app.use(express.json({ limit: '6mb' }));
 
 const origenesPermitidos = CORS_ORIGINS.split(',').map(o => o.trim()).filter(Boolean);
 app.use(cors({
@@ -264,10 +266,11 @@ function totalizar(items) {
 }
 
 app.get('/api/ventas', auth(), async (req, res) => {
-  const { desde, hasta } = req.query;
+  const { desde, hasta, estado } = req.query;
   let q = db.from('ventas').select('*').order('id', { ascending: false });
   if (desde) q = q.gte('fecha', desde);
   if (hasta) q = q.lte('fecha', hasta);
+  if (estado) q = q.eq('estado', estado);
 
   const { data, error } = await q;
   if (error) return enviarError(res, 500, error.message);
@@ -293,11 +296,18 @@ app.post('/api/ventas', auth(), async (req, res) => {
     const items = await normalizarItems(req.body?.items, req.usuario.rol);
     const totales = totalizar(items);
 
+    // "Por Pagar" deja la venta PENDIENTE: no suma a totales hasta que se cobre.
+    const metodoPago = req.body?.metodo_pago || 'Efectivo';
+    const esPendiente = metodoPago === 'Por Pagar';
+
     const cabecera = {
       fecha: req.body?.fecha || new Date().toISOString().slice(0, 10),
       hora: req.body?.hora || null,
       cliente: (req.body?.cliente || '').trim() || null,
-      metodo_pago: req.body?.metodo_pago || 'Efectivo',
+      metodo_pago: metodoPago,
+      estado: esPendiente ? 'PENDIENTE' : 'PAGADA',
+      fecha_pago: esPendiente ? null : new Date().toISOString(),
+      metodo_pago_final: esPendiente ? null : metodoPago,
       ...totales,
       impreso: false
     };
@@ -371,6 +381,237 @@ app.delete('/api/ventas', auth(true), async (req, res) => {
 
 app.delete('/api/ventas/:id', auth(true), async (req, res) => {
   const { error } = await db.from('ventas').delete().eq('id', req.params.id);
+  if (error) return enviarError(res, 500, error.message);
+  res.json({ ok: true });
+});
+
+/* Cobrar una venta pendiente ("Por Pagar" → PAGADA).
+   Lo puede hacer cualquier usuario autenticado: es una operación de caja,
+   no una edición del historial. */
+app.post('/api/ventas/:id/pago', auth(), async (req, res) => {
+  const metodo = String(req.body?.metodo_pago_final || '').trim();
+  const permitidos = ['Efectivo', 'Transferencia', 'Tarjeta Débito', 'Tarjeta Crédito'];
+  if (!permitidos.includes(metodo)) {
+    return enviarError(res, 400, 'Selecciona un medio de pago válido');
+  }
+
+  const { data: venta, error: errVenta } = await db.from('ventas').select('*').eq('id', req.params.id).single();
+  if (errVenta) return enviarError(res, 404, 'Venta no encontrada');
+  if (venta.estado === 'PAGADA') return enviarError(res, 400, 'Esta venta ya está pagada');
+
+  const { data, error } = await db.from('ventas')
+    .update({
+      estado: 'PAGADA',
+      metodo_pago_final: metodo,
+      fecha_pago: new Date().toISOString()
+    })
+    .eq('id', req.params.id)
+    .select()
+    .single();
+
+  if (error) return enviarError(res, 500, error.message);
+  res.json(limpiarParaRol(data, req.usuario.rol));
+});
+
+/* ============================================================
+   COMPRAS Y GASTOS  (solo admin: son datos de costos)
+   ============================================================ */
+const CLASIFICACIONES = [
+  'Mercadería / Productos para Reventa',
+  'Activo Fijo (Maquinaria, Herramientas, Equipamiento)',
+  'Insumos / Consumibles Taller',
+  'Gastos Operativos (Servicios, Arriendo, etc.)'
+];
+
+function sanearCompra(body = {}) {
+  const clasificacion = String(body.clasificacion || '').trim();
+  if (!CLASIFICACIONES.includes(clasificacion)) return { error: 'Clasificación no válida' };
+
+  const costo = num(body.costo_total);
+  if (costo <= 0) return { error: 'El costo total debe ser mayor a 0' };
+
+  return {
+    datos: {
+      fecha: body.fecha ? new Date(body.fecha).toISOString() : new Date().toISOString(),
+      proveedor: (body.proveedor || '').trim() || null,
+      clasificacion,
+      costo_total: costo,
+      descripcion: (body.descripcion || '').trim() || null,
+      url_documento: (body.url_documento || '').trim() || null,
+      url_comprobante: (body.url_comprobante || '').trim() || null
+    }
+  };
+}
+
+app.get('/api/compras', auth(true), async (req, res) => {
+  const { desde, hasta, clasificacion, sin_documento, sin_comprobante } = req.query;
+
+  let q = db.from('compras').select('*').order('fecha', { ascending: false });
+  if (desde) q = q.gte('fecha', desde);
+  if (hasta) q = q.lte('fecha', hasta + 'T23:59:59');
+  if (clasificacion) q = q.eq('clasificacion', clasificacion);
+  if (sin_documento === 'true') q = q.is('url_documento', null);
+  if (sin_comprobante === 'true') q = q.is('url_comprobante', null);
+
+  const { data, error } = await q;
+  if (error) return enviarError(res, 500, error.message);
+  res.json(data || []);
+});
+
+app.post('/api/compras', auth(true), async (req, res) => {
+  const { datos, error: errValidacion } = sanearCompra(req.body);
+  if (errValidacion) return enviarError(res, 400, errValidacion);
+
+  const { data, error } = await db.from('compras').insert([datos]).select().single();
+  if (error) return enviarError(res, 500, error.message);
+  res.status(201).json(data);
+});
+
+app.put('/api/compras/:id', auth(true), async (req, res) => {
+  const { datos, error: errValidacion } = sanearCompra(req.body);
+  if (errValidacion) return enviarError(res, 400, errValidacion);
+
+  const { data, error } = await db.from('compras').update(datos).eq('id', req.params.id).select().single();
+  if (error) return enviarError(res, 500, error.message);
+  res.json(data);
+});
+
+app.delete('/api/compras/:id', auth(true), async (req, res) => {
+  const { error } = await db.from('compras').delete().eq('id', req.params.id);
+  if (error) return enviarError(res, 500, error.message);
+  res.json({ ok: true });
+});
+
+/* Subida de factura / comprobante al bucket "compras-documentos".
+   El archivo llega en base64 y sube con service_role: la llave nunca
+   pasa por el navegador. */
+app.post('/api/compras/archivo', auth(true), async (req, res) => {
+  try {
+    const { nombre, tipo, base64 } = req.body || {};
+    if (!base64 || !nombre) return enviarError(res, 400, 'Falta el archivo');
+
+    const contenido = String(base64).includes(',') ? String(base64).split(',')[1] : String(base64);
+    const buffer = Buffer.from(contenido, 'base64');
+    if (buffer.length > 4 * 1024 * 1024) return enviarError(res, 413, 'El archivo supera los 4 MB');
+
+    const limpio = String(nombre).replace(/[^\w.\-]/g, '_').slice(-80);
+    const ruta = `${new Date().getFullYear()}/${Date.now()}_${limpio}`;
+
+    const { error } = await db.storage.from('compras-documentos')
+      .upload(ruta, buffer, { contentType: tipo || 'application/octet-stream', upsert: false });
+    if (error) throw new Error(error.message);
+
+    const { data } = db.storage.from('compras-documentos').getPublicUrl(ruta);
+    res.status(201).json({ url: data.publicUrl, ruta });
+  } catch (err) {
+    enviarError(res, 500, err.message || 'No se pudo subir el archivo');
+  }
+});
+
+/* ============================================================
+   ÓRDENES DE TRABAJO (Check-In / Check-Out)
+   Ver y crear: admin y trabajador · Eliminar: solo admin
+   ============================================================ */
+const CAMPOS_OT = [
+  'cliente_nombre', 'cliente_rut', 'cliente_telefono', 'cliente_correo', 'cliente_direccion',
+  'dispositivo_categoria', 'dispositivo_modelo', 'dispositivo_sn', 'dispositivo_enciende', 'dispositivo_pin',
+  'cargador_deja', 'cargador_tipo', 'cargador_voltaje', 'cargador_amperaje', 'cargador_cable',
+  'accesorios', 'falla_reportada', 'obs_cliente', 'obs_tecnico', 'acepta_responsabilidad'
+];
+
+function sanearOT(body = {}) {
+  const ot = {};
+  CAMPOS_OT.forEach(k => { if (body[k] !== undefined) ot[k] = body[k]; });
+
+  if (!ot.cliente_nombre || !String(ot.cliente_nombre).trim()) return { error: 'El nombre del cliente es obligatorio' };
+  if (!ot.dispositivo_modelo || !String(ot.dispositivo_modelo).trim()) return { error: 'Indica el modelo del equipo' };
+  if (!ot.falla_reportada || !String(ot.falla_reportada).trim()) return { error: 'Describe la falla reportada' };
+
+  ['cargador_deja', 'cargador_cable', 'acepta_responsabilidad'].forEach(k => { ot[k] = !!ot[k]; });
+  ['cargador_voltaje', 'cargador_amperaje'].forEach(k => { ot[k] = ot[k] === undefined || ot[k] === '' ? null : num(ot[k]); });
+  Object.keys(ot).forEach(k => { if (typeof ot[k] === 'string') ot[k] = ot[k].trim() || null; });
+
+  return { datos: ot };
+}
+
+app.get('/api/ot', auth(), async (req, res) => {
+  const { estado, buscar } = req.query;
+  let q = db.from('ordenes_trabajo').select('*').order('id', { ascending: false });
+  if (estado) q = q.eq('estado', estado);
+
+  const { data, error } = await q;
+  if (error) return enviarError(res, 500, error.message);
+
+  let filas = data || [];
+  if (buscar) {
+    const t = String(buscar).toLowerCase();
+    filas = filas.filter(o =>
+      (o.numero_ot || '').toLowerCase().includes(t) ||
+      (o.cliente_nombre || '').toLowerCase().includes(t) ||
+      (o.cliente_rut || '').toLowerCase().includes(t) ||
+      (o.dispositivo_modelo || '').toLowerCase().includes(t) ||
+      (o.dispositivo_sn || '').toLowerCase().includes(t)
+    );
+  }
+  res.json(filas);
+});
+
+app.get('/api/ot/:id', auth(), async (req, res) => {
+  const { data, error } = await db.from('ordenes_trabajo').select('*').eq('id', req.params.id).single();
+  if (error) return enviarError(res, 404, 'Orden de trabajo no encontrada');
+  res.json(data);
+});
+
+app.post('/api/ot', auth(), async (req, res) => {
+  const { datos, error: errValidacion } = sanearOT(req.body);
+  if (errValidacion) return enviarError(res, 400, errValidacion);
+
+  // numero_ot lo asigna el trigger de la base de datos (OT-000001, OT-000002…)
+  const { data, error } = await db.from('ordenes_trabajo')
+    .insert([{ ...datos, estado: 'PENDIENTE' }])
+    .select()
+    .single();
+
+  if (error) return enviarError(res, 500, error.message);
+  res.status(201).json(data);
+});
+
+app.put('/api/ot/:id', auth(), async (req, res) => {
+  const { datos, error: errValidacion } = sanearOT(req.body);
+  if (errValidacion) return enviarError(res, 400, errValidacion);
+
+  const { data, error } = await db.from('ordenes_trabajo').update(datos).eq('id', req.params.id).select().single();
+  if (error) return enviarError(res, 500, error.message);
+  res.json(data);
+});
+
+/* Check-Out: entrega del equipo con firma de quien retira */
+app.post('/api/ot/:id/entrega', auth(), async (req, res) => {
+  const { data: ot, error: errOT } = await db.from('ordenes_trabajo').select('*').eq('id', req.params.id).single();
+  if (errOT) return enviarError(res, 404, 'Orden de trabajo no encontrada');
+  if (ot.estado === 'ENTREGADO') return enviarError(res, 400, 'Esta orden ya fue entregada');
+
+  const firma = String(req.body?.retira_firma_base64 || '');
+  if (firma.length > 400000) return enviarError(res, 413, 'La firma es demasiado pesada');
+
+  const { data, error } = await db.from('ordenes_trabajo')
+    .update({
+      estado: 'ENTREGADO',
+      fecha_entrega: new Date().toISOString(),
+      retira_nombre: (req.body?.retira_nombre || '').trim() || null,
+      retira_rut: (req.body?.retira_rut || '').trim() || null,
+      retira_firma_base64: firma || null
+    })
+    .eq('id', req.params.id)
+    .select()
+    .single();
+
+  if (error) return enviarError(res, 500, error.message);
+  res.json(data);
+});
+
+app.delete('/api/ot/:id', auth(true), async (req, res) => {
+  const { error } = await db.from('ordenes_trabajo').delete().eq('id', req.params.id);
   if (error) return enviarError(res, 500, error.message);
   res.json({ ok: true });
 });
