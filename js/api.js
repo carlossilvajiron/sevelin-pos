@@ -81,6 +81,7 @@ const API = {
       return apiRequest('/ventas' + (cadena ? `?${cadena}` : ''));
     },
     registrarPago: (id, metodo) => apiRequest(`/ventas/${id}/pago`, { method: 'POST', body: { metodo_pago_final: metodo } }),
+    importar: (ventas) => apiRequest('/ventas/importar', { method: 'POST', body: { ventas } }),
     detalle: (id) => apiRequest(`/ventas/${id}`),
     crear: (venta) => apiRequest('/ventas', { method: 'POST', body: venta }),
     actualizar: (id, cambios) => apiRequest(`/ventas/${id}`, { method: 'PUT', body: cambios }),

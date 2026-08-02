@@ -39,7 +39,7 @@ function construirTicketHTML(venta, items) {
   return `
     <div class="t-head">
       <h3>${escaparHTML(NEGOCIO_NOMBRE)}</h3>
-      <p>Comprobante interno de venta</p>
+      <p>Comprobante</p>
       <p><b>Orden #${numero}</b></p>
     </div>
     <div class="t-line"></div>
@@ -57,9 +57,22 @@ function construirTicketHTML(venta, items) {
     </div>
     <div class="t-line"></div>
     <p class="t-center">¡Gracias por su compra!</p>
-    <p class="t-center t-small">${escaparHTML(NEGOCIO_NOMBRE)} · ${todayISO()}</p>
+    <p class="t-center t-small">${escaparHTML(NEGOCIO_NOMBRE)} · ${fechaHoraChile()}</p>
     <div class="t-feed"></div>
   `;
+}
+
+/* El nombre del archivo al "Guardar como PDF" lo toma el navegador del
+   título del documento, así que se cambia justo antes de imprimir y se
+   restaura al terminar. */
+const TITULO_ORIGINAL = document.title || 'Sistema POS - Sevelin';
+
+function ponerTituloImpresion(titulo) {
+  document.title = titulo;
+}
+
+function restaurarTitulo() {
+  document.title = TITULO_ORIGINAL;
 }
 
 /* Imprime el ticket. Se usa al finalizar la venta y al reimprimir. */
@@ -74,8 +87,14 @@ function imprimirTicketVenta(venta, items) {
   document.body.classList.remove('print-ot');
   document.body.classList.add('print-ticket');
 
+  const numero = String(venta.numero_orden ?? venta.id ?? 0).padStart(5, '0');
+  ponerTituloImpresion(`Ticket ${numero} - SEVELIN`);
+
   // Pequeño respiro para que el navegador pinte el ticket antes del diálogo
-  setTimeout(() => window.print(), 120);
+  setTimeout(() => {
+    window.print();
+    setTimeout(restaurarTitulo, 1500);   // por si no llega el evento afterprint
+  }, 120);
 }
 
 function reimprimirTicket(venta, items) {
@@ -113,9 +132,9 @@ function construirComprobanteOT(ot, etiquetaCopia) {
       </div>
 
       <div class="ot-doc-meta">
-        <span>Ingreso: <b>${String(ot.fecha_ingreso || '').slice(0, 16).replace('T', ' ')}</b></span>
+        <span>Ingreso: <b>${tsAChile(ot.fecha_ingreso)}</b></span>
         <span>Estado: <b>${escaparHTML(ot.estado || 'PENDIENTE')}</b></span>
-        ${entregado ? `<span>Entrega: <b>${String(ot.fecha_entrega || '').slice(0, 16).replace('T', ' ')}</b></span>` : ''}
+        ${entregado ? `<span>Entrega: <b>${tsAChile(ot.fecha_entrega)}</b></span>` : ''}
       </div>
 
       <div class="ot-doc-grid">
@@ -185,12 +204,25 @@ function imprimirOrdenTrabajo(ot) {
   document.body.classList.remove('print-ticket');
   document.body.classList.add('print-ot');
 
-  setTimeout(() => window.print(), 150);
+  // Nombre por defecto al guardar como PDF: "OT-000002 - SEVELIN"
+  ponerTituloImpresion(`${ot.numero_ot || 'OT'} - SEVELIN`);
+
+  setTimeout(() => {
+    window.print();
+    setTimeout(restaurarTitulo, 1500);
+  }, 150);
 }
 
 /* Al cerrar el diálogo de impresión se limpian los modos */
 window.addEventListener('afterprint', () => {
   document.body.classList.remove('print-ticket', 'print-ot');
+  restaurarTitulo();
 });
+
+/* Respaldo por si el navegador no dispara afterprint (algunos móviles) */
+function restaurarEstadoImpresion() {
+  document.body.classList.remove('print-ticket', 'print-ot');
+  restaurarTitulo();
+}
 
 document.addEventListener('DOMContentLoaded', aplicarAnchoTicket);

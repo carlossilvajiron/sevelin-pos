@@ -31,10 +31,37 @@ function fmtCLP(v) {
 }
 
 /* ------------------------------------------------------------
-   FECHAS EN HORA LOCAL
-   toISOString() convierte a UTC: en Chile, después de las 20:00 la
-   fecha saltaba al día siguiente. isoLocal() usa la fecha local real.
+   FECHAS Y HORAS EN ZONA HORARIA DE CHILE (America/Santiago)
+   ------------------------------------------------------------
+   El servidor de Vercel trabaja en UTC y el navegador usa la zona del
+   equipo, así que todo lo que se guarda, imprime o reporta se calcula
+   explícitamente sobre America/Santiago (UTC-4 / UTC-3 en verano).
    ------------------------------------------------------------ */
+const ZONA_CHILE = 'America/Santiago';
+
+const _fmtChile = new Intl.DateTimeFormat('en-CA', {
+  timeZone: ZONA_CHILE,
+  year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+});
+
+/* Devuelve {anio, mes, dia, hora, minuto, segundo} de una fecha en Chile */
+function partesChile(fecha = new Date()) {
+  const d = fecha instanceof Date ? fecha : new Date(fecha);
+  const partes = {};
+  _fmtChile.formatToParts(d).forEach(p => { if (p.type !== 'literal') partes[p.type] = p.value; });
+  return {
+    anio: partes.year,
+    mes: partes.month,
+    dia: partes.day,
+    hora: partes.hour === '24' ? '00' : partes.hour,
+    minuto: partes.minute,
+    segundo: partes.second
+  };
+}
+
+/* YYYY-MM-DD a partir de los componentes locales de una fecha ya construida
+   (se usa para rangos de período y fechas importadas desde archivos). */
 function isoLocal(date) {
   const d = date instanceof Date ? date : new Date(date);
   const mes = String(d.getMonth() + 1).padStart(2, '0');
@@ -42,11 +69,43 @@ function isoLocal(date) {
   return `${d.getFullYear()}-${mes}-${dia}`;
 }
 
-function todayISO() { return isoLocal(new Date()); }
+/* Fecha de hoy en Chile (YYYY-MM-DD) */
+function todayISO() {
+  const p = partesChile();
+  return `${p.anio}-${p.mes}-${p.dia}`;
+}
 
+/* Objeto Date posicionado en el día de hoy en Chile, al mediodía, para poder
+   usar getDay()/getMonth() sin riesgo de saltar de día por la zona horaria. */
+function fechaChile() {
+  const p = partesChile();
+  return new Date(Number(p.anio), Number(p.mes) - 1, Number(p.dia), 12, 0, 0);
+}
+
+/* Hora actual en Chile en formato 24 h ("19:14") */
 function horaActualCorta() {
-  // Formato 24 h ("19:14"), que es el que usa el ticket y el historial
-  return new Date().toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit', hour12: false });
+  const p = partesChile();
+  return `${p.hora}:${p.minuto}`;
+}
+
+/* "02-08-2026 19:14" — para el pie del ticket y los comprobantes */
+function fechaHoraChile(fecha = new Date()) {
+  const p = partesChile(fecha);
+  return `${p.dia}-${p.mes}-${p.anio} ${p.hora}:${p.minuto}`;
+}
+
+/* "2026-08-02 19:14" — para encabezados de reportes y tablas */
+function fechaHoraISOChile(fecha = new Date()) {
+  const p = partesChile(fecha);
+  return `${p.anio}-${p.mes}-${p.dia} ${p.hora}:${p.minuto}`;
+}
+
+/* Convierte un timestamp de la base de datos (UTC) a hora de Chile */
+function tsAChile(valor, conHora = true) {
+  if (!valor) return '';
+  const d = new Date(valor);
+  if (isNaN(d.getTime())) return String(valor);
+  return conHora ? fechaHoraISOChile(d) : fechaHoraISOChile(d).slice(0, 10);
 }
 
 /* ---------- Tema claro / oscuro ---------- */
@@ -105,8 +164,59 @@ function initNavegacion() {
       if (viewId === 'view-productos' && typeof cargarProductos === 'function') cargarProductos();
       if (viewId === 'view-compras' && typeof cargarCompras === 'function') cargarCompras();
       if (viewId === 'view-taller' && typeof cargarOrdenes === 'function') cargarOrdenes();
+
+      // Aviso para los módulos que necesitan reaccionar (p. ej. foco del lector en POS)
+      document.dispatchEvent(new CustomEvent('pos:vista-activa', { detail: { vista: viewId } }));
     });
   });
+}
+
+/* ------------------------------------------------------------
+   BARRA FLOTANTE DE SELECCIÓN
+   La comparten el Historial de Ventas y el módulo de Compras: cada uno
+   le pasa cuántas filas tiene marcadas y qué hacer con cada botón.
+   ------------------------------------------------------------ */
+function mostrarBarraSeleccion(cantidad, acciones = {}) {
+  const barra = document.getElementById('barraSeleccion');
+  if (!barra) return;
+
+  if (!cantidad) { ocultarBarraSeleccion(); return; }
+
+  const texto = document.getElementById('barraSeleccionTexto');
+  if (texto) texto.textContent = `${cantidad} ${cantidad === 1 ? 'registro seleccionado' : 'registros seleccionados'}`;
+
+  const btnJSON = document.getElementById('btnDescargarJSON');
+  const btnCSV = document.getElementById('btnDescargarCSV');
+  const btnLimpiar = document.getElementById('btnLimpiarSeleccionBarra');
+
+  // Se reemplazan los botones para no acumular listeners de vistas anteriores
+  [[btnJSON, acciones.onJSON], [btnCSV, acciones.onCSV], [btnLimpiar, acciones.onLimpiar]]
+    .forEach(([btn, handler]) => {
+      if (!btn || !handler) return;
+      const nuevo = btn.cloneNode(true);
+      btn.parentNode.replaceChild(nuevo, btn);
+      nuevo.addEventListener('click', handler);
+    });
+
+  barra.classList.add('show');
+}
+
+function ocultarBarraSeleccion() {
+  const barra = document.getElementById('barraSeleccion');
+  if (barra) barra.classList.remove('show');
+}
+
+/* Descarga un contenido generado en el navegador (JSON de respaldo, etc.) */
+function descargarArchivo(nombre, contenido, tipo = 'application/json') {
+  const blob = new Blob([contenido], { type: tipo + ';charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const enlace = document.createElement('a');
+  enlace.href = url;
+  enlace.download = nombre;
+  document.body.appendChild(enlace);
+  enlace.click();
+  document.body.removeChild(enlace);
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
 }
 
 document.addEventListener('DOMContentLoaded', () => {

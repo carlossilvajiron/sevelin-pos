@@ -1,0 +1,770 @@
+/* ============================================================
+   SEVELIN POS — BACKEND (Express sobre funciones serverless de Vercel)
+   ------------------------------------------------------------
+   Las llaves de Supabase viven SOLO aquí (variables de entorno).
+   El navegador nunca las ve: habla con estos endpoints usando un JWT.
+
+   Variables de entorno necesarias (Vercel → Settings → Environment Variables):
+     SUPABASE_URL              https://xxxx.supabase.co
+     SUPABASE_SERVICE_ROLE_KEY eyJhbGciOi...   (¡secreta! nunca al frontend)
+     JWT_SECRET                cadena larga y aleatoria
+     ADMIN_PIN                 9067
+     WORKER_PIN                0495
+     CORS_ORIGINS              https://tu-pos.vercel.app,http://localhost:5500
+     NEGOCIO_NOMBRE            Sevelin            (opcional)
+   ============================================================ */
+
+const express = require('express');
+const cors = require('cors');
+const helmet = require('helmet');
+const jwt = require('jsonwebtoken');
+const { createClient } = require('@supabase/supabase-js');
+
+const app = express();
+
+/* ---------- Configuración ---------- */
+const {
+  SUPABASE_URL,
+  SUPABASE_SERVICE_ROLE_KEY,
+  JWT_SECRET,
+  ADMIN_PIN = '9067',
+  WORKER_PIN = '0495',
+  CORS_ORIGINS = '*',
+  NEGOCIO_NOMBRE = 'Sevelin'
+} = process.env;
+
+const TOKEN_TTL = '12h';
+
+if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+  console.warn('[POS] Faltan SUPABASE_URL o SUPABASE_SERVICE_ROLE_KEY.');
+}
+if (!JWT_SECRET) {
+  console.warn('[POS] Falta JWT_SECRET: define uno largo y aleatorio en producción.');
+}
+
+// El cliente service_role omite RLS, por eso solo puede existir en el servidor.
+const db = createClient(SUPABASE_URL || 'http://localhost', SUPABASE_SERVICE_ROLE_KEY || 'sin-key', {
+  auth: { persistSession: false, autoRefreshToken: false }
+});
+
+/* ---------- Middlewares base ---------- */
+app.use(helmet({ contentSecurityPolicy: false, crossOriginResourcePolicy: { policy: 'cross-origin' } }));
+// 6 MB: los documentos de compras viajan en base64 dentro del JSON.
+// (Vercel corta las peticiones sobre ~4.5 MB, por eso el front limita a 4 MB.)
+app.use(express.json({ limit: '6mb' }));
+
+const origenesPermitidos = CORS_ORIGINS.split(',').map(o => o.trim()).filter(Boolean);
+app.use(cors({
+  origin(origin, cb) {
+    // Permite herramientas sin Origin (curl, Postman) y el mismo dominio de Vercel
+    if (!origin || origenesPermitidos.includes('*') || origenesPermitidos.includes(origin)) return cb(null, true);
+    return cb(new Error('Origen no permitido por CORS'));
+  },
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  maxAge: 86400
+}));
+
+/* ---------- Utilidades ---------- */
+const num = v => Number(v) || 0;
+const enviarError = (res, code, msg) => res.status(code).json({ error: msg });
+
+function firmarToken(rol) {
+  return jwt.sign({ rol }, JWT_SECRET || 'dev-secret-cambiar', { expiresIn: TOKEN_TTL });
+}
+
+// Autenticación por JWT. requiereAdmin = true bloquea a los trabajadores.
+function auth(requiereAdmin = false) {
+  return (req, res, next) => {
+    const header = req.headers.authorization || '';
+    const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+    if (!token) return enviarError(res, 401, 'Falta el token de sesión');
+
+    try {
+      req.usuario = jwt.verify(token, JWT_SECRET || 'dev-secret-cambiar');
+    } catch (_) {
+      return enviarError(res, 401, 'Sesión inválida o expirada');
+    }
+    if (requiereAdmin && req.usuario.rol !== 'admin') {
+      return enviarError(res, 403, 'Esta acción es solo para el administrador');
+    }
+    next();
+  };
+}
+
+// Los trabajadores nunca reciben costos ni utilidades: se limpian en el servidor.
+function limpiarParaRol(fila, rol) {
+  if (!fila || rol === 'admin') return fila;
+  const { costo_total, utilidad, costo_unitario, ...visible } = fila;
+  return visible;
+}
+const limpiarLista = (filas, rol) => (filas || []).map(f => limpiarParaRol(f, rol));
+
+/* Intentos de PIN fallidos por IP (memoria del proceso; en serverless es por
+   instancia, suficiente como freno básico ante fuerza bruta). */
+const intentos = new Map();
+function frenoLogin(req, res, next) {
+  const ip = req.headers['x-forwarded-for'] || req.ip || 'anon';
+  const ahora = Date.now();
+  const reg = intentos.get(ip) || { n: 0, hasta: 0 };
+
+  if (reg.hasta > ahora) {
+    return enviarError(res, 429, 'Demasiados intentos. Espera un minuto.');
+  }
+  if (ahora - (reg.ts || 0) > 10 * 60 * 1000) reg.n = 0;
+
+  reg.ts = ahora;
+  req._registroIntento = { ip, reg };
+  intentos.set(ip, reg);
+  next();
+}
+
+/* ============================================================
+   SESIÓN
+   ============================================================ */
+app.post('/api/login', frenoLogin, (req, res) => {
+  const pin = String(req.body?.pin || '').trim();
+  const { ip, reg } = req._registroIntento || {};
+
+  let rol = null;
+  if (pin && pin === String(ADMIN_PIN)) rol = 'admin';
+  else if (pin && pin === String(WORKER_PIN)) rol = 'trabajador';
+
+  if (!rol) {
+    if (reg) {
+      reg.n += 1;
+      if (reg.n >= 5) { reg.hasta = Date.now() + 60 * 1000; reg.n = 0; }
+      intentos.set(ip, reg);
+    }
+    return enviarError(res, 401, 'PIN incorrecto');
+  }
+
+  if (reg) { reg.n = 0; intentos.set(ip, reg); }
+  res.json({ token: firmarToken(rol), rol, negocio: NEGOCIO_NOMBRE, expiraEn: TOKEN_TTL });
+});
+
+// Permite al frontend saber si el token guardado sigue siendo válido
+app.get('/api/me', auth(), (req, res) => {
+  res.json({ rol: req.usuario.rol, negocio: NEGOCIO_NOMBRE });
+});
+
+app.get('/api/health', (_req, res) => res.json({ ok: true, servicio: 'sevelin-pos-api' }));
+
+/* ============================================================
+   PRODUCTOS
+   Lectura: admin y trabajador · Escritura: solo admin
+   ============================================================ */
+const CAMPOS_PRODUCTO = [
+  'sku', 'codigo_barras', 'nombre', 'costo_unitario', 'precio_unitario', 'stock',
+  'requiere_sn', 'peso_kg', 'alto_cm', 'ancho_cm', 'profundidad_cm', 'descripcion',
+  'stock_minimo', 'alerta_stock'
+];
+
+function sanearProducto(body = {}) {
+  const p = {};
+  CAMPOS_PRODUCTO.forEach(k => { if (body[k] !== undefined) p[k] = body[k]; });
+
+  if (!p.nombre || !String(p.nombre).trim()) return null;
+  p.nombre = String(p.nombre).trim();
+  ['costo_unitario', 'precio_unitario', 'stock', 'peso_kg', 'alto_cm', 'ancho_cm', 'profundidad_cm', 'stock_minimo']
+    .forEach(k => { if (p[k] !== undefined) p[k] = num(p[k]); });
+  p.requiere_sn = !!p.requiere_sn;
+  if (body.alerta_stock !== undefined) p.alerta_stock = !!body.alerta_stock;
+
+  // Cada vez que se toca el stock queda registrada la fecha del cambio
+  if (p.stock !== undefined) p.stock_actualizado_en = new Date().toISOString();
+  ['sku', 'codigo_barras', 'descripcion'].forEach(k => {
+    if (p[k] !== undefined) p[k] = String(p[k]).trim() || null;
+  });
+  return p;
+}
+
+app.get('/api/productos', auth(), async (req, res) => {
+  const { data, error } = await db.from('productos').select('*').order('nombre', { ascending: true });
+  if (error) return enviarError(res, 500, error.message);
+  res.json(limpiarLista(data, req.usuario.rol));
+});
+
+app.post('/api/productos', auth(true), async (req, res) => {
+  const producto = sanearProducto(req.body);
+  if (!producto) return enviarError(res, 400, 'El nombre del producto es obligatorio');
+
+  const { data, error } = await db.from('productos').insert([producto]).select().single();
+  if (error) return enviarError(res, 500, error.message);
+  res.status(201).json(data);
+});
+
+// Importación masiva (CSV / Excel de Tiendanube)
+app.post('/api/productos/bulk', auth(true), async (req, res) => {
+  const lista = Array.isArray(req.body?.productos) ? req.body.productos : [];
+  const productos = lista.map(sanearProducto).filter(Boolean);
+  if (productos.length === 0) return enviarError(res, 400, 'No hay productos válidos para importar');
+
+  const { error } = await db.from('productos').insert(productos);
+  if (error) return enviarError(res, 500, error.message);
+  res.status(201).json({ importados: productos.length });
+});
+
+app.put('/api/productos/:id', auth(true), async (req, res) => {
+  const producto = sanearProducto(req.body);
+  if (!producto) return enviarError(res, 400, 'El nombre del producto es obligatorio');
+
+  const { data, error } = await db.from('productos').update(producto).eq('id', req.params.id).select().single();
+  if (error) return enviarError(res, 500, error.message);
+  res.json(data);
+});
+
+app.delete('/api/productos/:id', auth(true), async (req, res) => {
+  if (req.params.id === 'todos') {
+    const { error } = await db.from('productos').delete().gt('id', 0);
+    if (error) return enviarError(res, 500, error.message);
+    return res.json({ ok: true, alcance: 'todos' });
+  }
+  const { error } = await db.from('productos').delete().eq('id', req.params.id);
+  if (error) return enviarError(res, 500, error.message);
+  res.json({ ok: true });
+});
+
+/* ============================================================
+   VENTAS
+   Ver y registrar: admin y trabajador
+   Editar y eliminar: solo admin
+   ============================================================ */
+
+// Los totales SIEMPRE se calculan en el servidor a partir de los ítems.
+async function normalizarItems(items, rolSolicitante) {
+  const lista = Array.isArray(items) ? items : [];
+  if (lista.length === 0) throw new Error('La venta no tiene productos');
+
+  // Para trabajadores el costo lo pone el catálogo, no el navegador
+  let costosCatalogo = {};
+  const ids = [...new Set(lista.map(i => i.producto_id).filter(Boolean))];
+  if (ids.length) {
+    const { data } = await db.from('productos').select('id, costo_unitario').in('id', ids);
+    (data || []).forEach(p => { costosCatalogo[p.id] = num(p.costo_unitario); });
+  }
+
+  return lista.map(it => {
+    const cantidad = Math.max(1, Math.round(num(it.cantidad) || 1));
+    const precio = num(it.precio_unitario);
+    const costoCliente = num(it.costo_unitario);
+    const costoCatalogo = it.producto_id ? (costosCatalogo[it.producto_id] || 0) : 0;
+    const costo = rolSolicitante === 'admin' ? costoCliente : (costoCatalogo || costoCliente);
+
+    return {
+      producto_id: it.producto_id || null,
+      sku: it.sku || null,
+      nombre: String(it.nombre || 'Producto').trim(),
+      cantidad,
+      costo_unitario: costo,
+      precio_unitario: precio,
+      subtotal: precio * cantidad,
+      serial_number: it.serial_number || null
+    };
+  });
+}
+
+/* Ajusta el stock del catálogo a partir de los ítems de una venta.
+   signo = -1 descuenta (venta), signo = +1 repone (anulación).
+   El producto se busca por id, luego por SKU y finalmente por código de
+   barras, de modo que también funcione con ventas importadas. */
+async function ajustarStock(items, signo = -1) {
+  const ajustados = [];
+
+  for (const item of (items || [])) {
+    let producto = null;
+
+    if (item.producto_id) {
+      const { data } = await db.from('productos').select('id, stock').eq('id', item.producto_id).maybeSingle();
+      producto = data || null;
+    }
+    if (!producto && item.sku) {
+      const { data } = await db.from('productos').select('id, stock').eq('sku', String(item.sku).trim()).limit(1);
+      producto = (data && data[0]) || null;
+    }
+    if (!producto && item.codigo_barras) {
+      const { data } = await db.from('productos').select('id, stock').eq('codigo_barras', String(item.codigo_barras).trim()).limit(1);
+      producto = (data && data[0]) || null;
+    }
+    if (!producto) continue; // producto libre (no está en el catálogo)
+
+    const nuevoStock = num(producto.stock) + signo * num(item.cantidad);
+    await db.from('productos')
+      .update({ stock: nuevoStock, stock_actualizado_en: new Date().toISOString() })
+      .eq('id', producto.id);
+
+    ajustados.push({ producto_id: producto.id, stock: nuevoStock });
+  }
+
+  return ajustados;
+}
+
+function totalizar(items) {
+  const total = items.reduce((a, i) => a + i.subtotal, 0);
+  const costoTotal = items.reduce((a, i) => a + i.costo_unitario * i.cantidad, 0);
+  return { total, costo_total: costoTotal, utilidad: total - costoTotal };
+}
+
+app.get('/api/ventas', auth(), async (req, res) => {
+  const { desde, hasta, estado } = req.query;
+  let q = db.from('ventas').select('*').order('id', { ascending: false });
+  if (desde) q = q.gte('fecha', desde);
+  if (hasta) q = q.lte('fecha', hasta);
+  if (estado) q = q.eq('estado', estado);
+
+  const { data, error } = await q;
+  if (error) return enviarError(res, 500, error.message);
+  res.json(limpiarLista(data, req.usuario.rol));
+});
+
+// Detalle: venta + ítems (el ticket lo necesita para reimprimir)
+app.get('/api/ventas/:id', auth(), async (req, res) => {
+  const { data: venta, error } = await db.from('ventas').select('*').eq('id', req.params.id).single();
+  if (error) return enviarError(res, 404, 'Venta no encontrada');
+
+  const { data: items, error: errItems } = await db.from('venta_items').select('*').eq('venta_id', req.params.id).order('id');
+  if (errItems) return enviarError(res, 500, errItems.message);
+
+  res.json({
+    ...limpiarParaRol(venta, req.usuario.rol),
+    items: limpiarLista(items, req.usuario.rol)
+  });
+});
+
+app.post('/api/ventas', auth(), async (req, res) => {
+  try {
+    const items = await normalizarItems(req.body?.items, req.usuario.rol);
+    const totales = totalizar(items);
+
+    // "Por Pagar" deja la venta PENDIENTE: no suma a totales hasta que se cobre.
+    const metodoPago = req.body?.metodo_pago || 'Efectivo';
+    const esPendiente = metodoPago === 'Por Pagar';
+
+    const cabecera = {
+      fecha: req.body?.fecha || new Date().toISOString().slice(0, 10),
+      hora: req.body?.hora || null,
+      cliente: (req.body?.cliente || '').trim() || null,
+      metodo_pago: metodoPago,
+      estado: esPendiente ? 'PENDIENTE' : 'PAGADA',
+      fecha_pago: esPendiente ? null : new Date().toISOString(),
+      metodo_pago_final: esPendiente ? null : metodoPago,
+      ...totales,
+      impreso: false
+    };
+
+    const { data: venta, error } = await db.from('ventas').insert([cabecera]).select().single();
+    if (error) throw new Error(error.message);
+
+    const { error: errItems } = await db.from('venta_items')
+      .insert(items.map(i => ({ ...i, venta_id: venta.id })));
+
+    if (errItems) {
+      // Evita dejar una venta huérfana si falla el detalle
+      await db.from('ventas').delete().eq('id', venta.id);
+      throw new Error(errItems.message);
+    }
+
+    // El stock se descuenta después de confirmar el detalle
+    await ajustarStock(items, -1);
+
+    res.status(201).json({ ...venta, items });
+  } catch (err) {
+    enviarError(res, 400, err.message || 'No se pudo registrar la venta');
+  }
+});
+
+/* Importación de ventas externas (respaldo JSON o planilla).
+   Respeta fecha, hora, correlativo, estado y montos del archivo, y descuenta
+   el stock de los productos que existan en el catálogo por SKU o código de
+   barras. Solo el administrador puede importar. */
+app.post('/api/ventas/importar', auth(true), async (req, res) => {
+  const lista = Array.isArray(req.body?.ventas) ? req.body.ventas : [];
+  if (lista.length === 0) return enviarError(res, 400, 'No hay ventas para importar');
+  if (lista.length > 500) return enviarError(res, 413, 'Importa como máximo 500 ventas por archivo');
+
+  const resultado = { importadas: 0, omitidas: 0, errores: [] };
+
+  for (const origen of lista) {
+    try {
+      if (!origen.fecha) throw new Error('Falta la fecha');
+
+      const items = (Array.isArray(origen.items) ? origen.items : []).map(it => {
+        const cantidad = Math.max(1, Math.round(num(it.cantidad) || 1));
+        const precio = num(it.precio_unitario);
+        return {
+          producto_id: it.producto_id || null,
+          sku: it.sku || null,
+          codigo_barras: it.codigo_barras || null,
+          nombre: String(it.nombre || 'Producto importado').trim(),
+          cantidad,
+          costo_unitario: num(it.costo_unitario),
+          precio_unitario: precio,
+          subtotal: num(it.subtotal) || precio * cantidad,
+          serial_number: it.serial_number || null
+        };
+      });
+
+      // Si el archivo no trae detalle, se crea una línea con el total de la venta
+      if (items.length === 0) {
+        const total = num(origen.total);
+        if (total <= 0) throw new Error('Venta sin ítems ni total');
+        items.push({
+          producto_id: null, sku: null, codigo_barras: null,
+          nombre: 'Venta importada', cantidad: 1,
+          costo_unitario: num(origen.costo_total), precio_unitario: total,
+          subtotal: total, serial_number: null
+        });
+      }
+
+      const totales = totalizar(items);
+      const estado = origen.estado === 'PENDIENTE' ? 'PENDIENTE' : 'PAGADA';
+      const metodoPago = origen.metodo_pago || (estado === 'PENDIENTE' ? 'Por Pagar' : 'Efectivo');
+
+      const cabecera = {
+        fecha: String(origen.fecha).slice(0, 10),
+        hora: origen.hora || null,
+        cliente: (origen.cliente || '').trim() || null,
+        metodo_pago: metodoPago,
+        estado,
+        fecha_pago: estado === 'PAGADA' ? (origen.fecha_pago || null) : null,
+        metodo_pago_final: estado === 'PAGADA' ? (origen.metodo_pago_final || metodoPago) : null,
+        // Se respetan los montos del archivo si vienen; si no, se recalculan
+        total: num(origen.total) || totales.total,
+        costo_total: origen.costo_total !== undefined ? num(origen.costo_total) : totales.costo_total,
+        utilidad: origen.utilidad !== undefined ? num(origen.utilidad) : totales.utilidad,
+        impreso: true
+      };
+
+      // Correlativo original: si ese número ya existe, se deja que la base asigne uno nuevo
+      if (origen.numero_orden) {
+        const { data: existente } = await db.from('ventas')
+          .select('id').eq('numero_orden', origen.numero_orden).limit(1);
+        if (existente && existente.length) {
+          resultado.omitidas++;
+          resultado.errores.push(`Orden ${origen.numero_orden} ya existe: se omitió`);
+          continue;
+        }
+        cabecera.numero_orden = origen.numero_orden;
+      }
+
+      const { data: venta, error } = await db.from('ventas').insert([cabecera]).select().single();
+      if (error) throw new Error(error.message);
+
+      const { error: errItems } = await db.from('venta_items')
+        .insert(items.map(({ codigo_barras, ...i }) => ({ ...i, venta_id: venta.id })));
+      if (errItems) {
+        await db.from('ventas').delete().eq('id', venta.id);
+        throw new Error(errItems.message);
+      }
+
+      await ajustarStock(items, -1);
+      resultado.importadas++;
+    } catch (err) {
+      resultado.omitidas++;
+      resultado.errores.push(err.message || 'Error desconocido');
+    }
+  }
+
+  res.status(201).json(resultado);
+});
+
+/* Editar venta (solo admin).
+   Acepta cabecera y, opcionalmente, la lista completa de ítems:
+   si viene "items", se reemplaza el detalle y se recalculan
+   total, costo_total y utilidad. */
+app.put('/api/ventas/:id', auth(true), async (req, res) => {
+  try {
+    const id = req.params.id;
+    const cambios = {};
+    if (req.body?.fecha) cambios.fecha = req.body.fecha;
+    if (req.body?.hora !== undefined) cambios.hora = req.body.hora || null;
+    if (req.body?.cliente !== undefined) cambios.cliente = (req.body.cliente || '').trim() || null;
+    if (req.body?.metodo_pago) cambios.metodo_pago = req.body.metodo_pago;
+
+    if (Array.isArray(req.body?.items)) {
+      const items = await normalizarItems(req.body.items, 'admin');
+      Object.assign(cambios, totalizar(items));
+
+      const { error: errDel } = await db.from('venta_items').delete().eq('venta_id', id);
+      if (errDel) throw new Error(errDel.message);
+
+      const { error: errIns } = await db.from('venta_items')
+        .insert(items.map(i => ({ ...i, venta_id: Number(id) })));
+      if (errIns) throw new Error(errIns.message);
+    }
+
+    const { data, error } = await db.from('ventas').update(cambios).eq('id', id).select().single();
+    if (error) throw new Error(error.message);
+
+    const { data: items } = await db.from('venta_items').select('*').eq('venta_id', id).order('id');
+    res.json({ ...data, items: items || [] });
+  } catch (err) {
+    enviarError(res, 400, err.message || 'No se pudo actualizar la venta');
+  }
+});
+
+// Eliminar por período o todo el historial (solo admin)
+app.delete('/api/ventas', auth(true), async (req, res) => {
+  const { desde, hasta, todo } = req.query;
+
+  let q = db.from('ventas').delete();
+  if (todo === 'true') q = q.gt('id', 0);
+  else if (desde && hasta) q = q.gte('fecha', desde).lte('fecha', hasta);
+  else return enviarError(res, 400, 'Indica un rango de fechas o todo=true');
+
+  const { error } = await q;
+  if (error) return enviarError(res, 500, error.message);
+  res.json({ ok: true });
+});
+
+app.delete('/api/ventas/:id', auth(true), async (req, res) => {
+  const { error } = await db.from('ventas').delete().eq('id', req.params.id);
+  if (error) return enviarError(res, 500, error.message);
+  res.json({ ok: true });
+});
+
+/* Cobrar una venta pendiente ("Por Pagar" → PAGADA).
+   Lo puede hacer cualquier usuario autenticado: es una operación de caja,
+   no una edición del historial. */
+app.post('/api/ventas/:id/pago', auth(), async (req, res) => {
+  const metodo = String(req.body?.metodo_pago_final || '').trim();
+  const permitidos = ['Efectivo', 'Transferencia', 'Tarjeta Débito', 'Tarjeta Crédito'];
+  if (!permitidos.includes(metodo)) {
+    return enviarError(res, 400, 'Selecciona un medio de pago válido');
+  }
+
+  const { data: venta, error: errVenta } = await db.from('ventas').select('*').eq('id', req.params.id).single();
+  if (errVenta) return enviarError(res, 404, 'Venta no encontrada');
+  if (venta.estado === 'PAGADA') return enviarError(res, 400, 'Esta venta ya está pagada');
+
+  const { data, error } = await db.from('ventas')
+    .update({
+      estado: 'PAGADA',
+      metodo_pago_final: metodo,
+      fecha_pago: new Date().toISOString()
+    })
+    .eq('id', req.params.id)
+    .select()
+    .single();
+
+  if (error) return enviarError(res, 500, error.message);
+  res.json(limpiarParaRol(data, req.usuario.rol));
+});
+
+/* ============================================================
+   COMPRAS Y GASTOS  (solo admin: son datos de costos)
+   ============================================================ */
+const CLASIFICACIONES = [
+  'Mercadería / Productos para Reventa',
+  'Activo Fijo (Maquinaria, Herramientas, Equipamiento)',
+  'Insumos / Consumibles Taller',
+  'Gastos Operativos (Servicios, Arriendo, etc.)'
+];
+
+function sanearCompra(body = {}) {
+  const clasificacion = String(body.clasificacion || '').trim();
+  if (!CLASIFICACIONES.includes(clasificacion)) return { error: 'Clasificación no válida' };
+
+  const costo = num(body.costo_total);
+  if (costo <= 0) return { error: 'El costo total debe ser mayor a 0' };
+
+  return {
+    datos: {
+      fecha: body.fecha ? new Date(body.fecha).toISOString() : new Date().toISOString(),
+      proveedor: (body.proveedor || '').trim() || null,
+      clasificacion,
+      costo_total: costo,
+      descripcion: (body.descripcion || '').trim() || null,
+      url_documento: (body.url_documento || '').trim() || null,
+      url_comprobante: (body.url_comprobante || '').trim() || null
+    }
+  };
+}
+
+app.get('/api/compras', auth(true), async (req, res) => {
+  const { desde, hasta, clasificacion, sin_documento, sin_comprobante } = req.query;
+
+  let q = db.from('compras').select('*').order('fecha', { ascending: false });
+  if (desde) q = q.gte('fecha', desde);
+  if (hasta) q = q.lte('fecha', hasta + 'T23:59:59');
+  if (clasificacion) q = q.eq('clasificacion', clasificacion);
+  if (sin_documento === 'true') q = q.is('url_documento', null);
+  if (sin_comprobante === 'true') q = q.is('url_comprobante', null);
+
+  const { data, error } = await q;
+  if (error) return enviarError(res, 500, error.message);
+  res.json(data || []);
+});
+
+app.post('/api/compras', auth(true), async (req, res) => {
+  const { datos, error: errValidacion } = sanearCompra(req.body);
+  if (errValidacion) return enviarError(res, 400, errValidacion);
+
+  const { data, error } = await db.from('compras').insert([datos]).select().single();
+  if (error) return enviarError(res, 500, error.message);
+  res.status(201).json(data);
+});
+
+app.put('/api/compras/:id', auth(true), async (req, res) => {
+  const { datos, error: errValidacion } = sanearCompra(req.body);
+  if (errValidacion) return enviarError(res, 400, errValidacion);
+
+  const { data, error } = await db.from('compras').update(datos).eq('id', req.params.id).select().single();
+  if (error) return enviarError(res, 500, error.message);
+  res.json(data);
+});
+
+app.delete('/api/compras/:id', auth(true), async (req, res) => {
+  const { error } = await db.from('compras').delete().eq('id', req.params.id);
+  if (error) return enviarError(res, 500, error.message);
+  res.json({ ok: true });
+});
+
+/* Subida de factura / comprobante al bucket "compras-documentos".
+   El archivo llega en base64 y sube con service_role: la llave nunca
+   pasa por el navegador. */
+app.post('/api/compras/archivo', auth(true), async (req, res) => {
+  try {
+    const { nombre, tipo, base64 } = req.body || {};
+    if (!base64 || !nombre) return enviarError(res, 400, 'Falta el archivo');
+
+    const contenido = String(base64).includes(',') ? String(base64).split(',')[1] : String(base64);
+    const buffer = Buffer.from(contenido, 'base64');
+    if (buffer.length > 4 * 1024 * 1024) return enviarError(res, 413, 'El archivo supera los 4 MB');
+
+    const limpio = String(nombre).replace(/[^\w.\-]/g, '_').slice(-80);
+    const ruta = `${new Date().getFullYear()}/${Date.now()}_${limpio}`;
+
+    const { error } = await db.storage.from('compras-documentos')
+      .upload(ruta, buffer, { contentType: tipo || 'application/octet-stream', upsert: false });
+    if (error) throw new Error(error.message);
+
+    const { data } = db.storage.from('compras-documentos').getPublicUrl(ruta);
+    res.status(201).json({ url: data.publicUrl, ruta });
+  } catch (err) {
+    enviarError(res, 500, err.message || 'No se pudo subir el archivo');
+  }
+});
+
+/* ============================================================
+   ÓRDENES DE TRABAJO (Check-In / Check-Out)
+   Ver y crear: admin y trabajador · Eliminar: solo admin
+   ============================================================ */
+const CAMPOS_OT = [
+  'cliente_nombre', 'cliente_rut', 'cliente_telefono', 'cliente_correo', 'cliente_direccion',
+  'dispositivo_categoria', 'dispositivo_modelo', 'dispositivo_sn', 'dispositivo_enciende', 'dispositivo_pin',
+  'cargador_deja', 'cargador_tipo', 'cargador_voltaje', 'cargador_amperaje', 'cargador_cable',
+  'accesorios', 'falla_reportada', 'obs_cliente', 'obs_tecnico', 'acepta_responsabilidad'
+];
+
+function sanearOT(body = {}) {
+  const ot = {};
+  CAMPOS_OT.forEach(k => { if (body[k] !== undefined) ot[k] = body[k]; });
+
+  if (!ot.cliente_nombre || !String(ot.cliente_nombre).trim()) return { error: 'El nombre del cliente es obligatorio' };
+  if (!ot.dispositivo_modelo || !String(ot.dispositivo_modelo).trim()) return { error: 'Indica el modelo del equipo' };
+  if (!ot.falla_reportada || !String(ot.falla_reportada).trim()) return { error: 'Describe la falla reportada' };
+
+  ['cargador_deja', 'cargador_cable', 'acepta_responsabilidad'].forEach(k => { ot[k] = !!ot[k]; });
+  ['cargador_voltaje', 'cargador_amperaje'].forEach(k => { ot[k] = ot[k] === undefined || ot[k] === '' ? null : num(ot[k]); });
+  Object.keys(ot).forEach(k => { if (typeof ot[k] === 'string') ot[k] = ot[k].trim() || null; });
+
+  return { datos: ot };
+}
+
+app.get('/api/ot', auth(), async (req, res) => {
+  const { estado, buscar } = req.query;
+  let q = db.from('ordenes_trabajo').select('*').order('id', { ascending: false });
+  if (estado) q = q.eq('estado', estado);
+
+  const { data, error } = await q;
+  if (error) return enviarError(res, 500, error.message);
+
+  let filas = data || [];
+  if (buscar) {
+    const t = String(buscar).toLowerCase();
+    filas = filas.filter(o =>
+      (o.numero_ot || '').toLowerCase().includes(t) ||
+      (o.cliente_nombre || '').toLowerCase().includes(t) ||
+      (o.cliente_rut || '').toLowerCase().includes(t) ||
+      (o.dispositivo_modelo || '').toLowerCase().includes(t) ||
+      (o.dispositivo_sn || '').toLowerCase().includes(t)
+    );
+  }
+  res.json(filas);
+});
+
+app.get('/api/ot/:id', auth(), async (req, res) => {
+  const { data, error } = await db.from('ordenes_trabajo').select('*').eq('id', req.params.id).single();
+  if (error) return enviarError(res, 404, 'Orden de trabajo no encontrada');
+  res.json(data);
+});
+
+app.post('/api/ot', auth(), async (req, res) => {
+  const { datos, error: errValidacion } = sanearOT(req.body);
+  if (errValidacion) return enviarError(res, 400, errValidacion);
+
+  // numero_ot lo asigna el trigger de la base de datos (OT-000001, OT-000002…)
+  const { data, error } = await db.from('ordenes_trabajo')
+    .insert([{ ...datos, estado: 'PENDIENTE' }])
+    .select()
+    .single();
+
+  if (error) return enviarError(res, 500, error.message);
+  res.status(201).json(data);
+});
+
+app.put('/api/ot/:id', auth(), async (req, res) => {
+  const { datos, error: errValidacion } = sanearOT(req.body);
+  if (errValidacion) return enviarError(res, 400, errValidacion);
+
+  const { data, error } = await db.from('ordenes_trabajo').update(datos).eq('id', req.params.id).select().single();
+  if (error) return enviarError(res, 500, error.message);
+  res.json(data);
+});
+
+/* Check-Out: entrega del equipo con firma de quien retira */
+app.post('/api/ot/:id/entrega', auth(), async (req, res) => {
+  const { data: ot, error: errOT } = await db.from('ordenes_trabajo').select('*').eq('id', req.params.id).single();
+  if (errOT) return enviarError(res, 404, 'Orden de trabajo no encontrada');
+  if (ot.estado === 'ENTREGADO') return enviarError(res, 400, 'Esta orden ya fue entregada');
+
+  const firma = String(req.body?.retira_firma_base64 || '');
+  if (firma.length > 400000) return enviarError(res, 413, 'La firma es demasiado pesada');
+
+  const { data, error } = await db.from('ordenes_trabajo')
+    .update({
+      estado: 'ENTREGADO',
+      fecha_entrega: new Date().toISOString(),
+      retira_nombre: (req.body?.retira_nombre || '').trim() || null,
+      retira_rut: (req.body?.retira_rut || '').trim() || null,
+      retira_firma_base64: firma || null
+    })
+    .eq('id', req.params.id)
+    .select()
+    .single();
+
+  if (error) return enviarError(res, 500, error.message);
+  res.json(data);
+});
+
+app.delete('/api/ot/:id', auth(true), async (req, res) => {
+  const { error } = await db.from('ordenes_trabajo').delete().eq('id', req.params.id);
+  if (error) return enviarError(res, 500, error.message);
+  res.json({ ok: true });
+});
+
+/* ---------- 404 y errores ---------- */
+app.use('/api', (_req, res) => enviarError(res, 404, 'Endpoint no encontrado'));
+app.use((err, _req, res, _next) => {
+  console.error('[POS] Error no controlado:', err.message);
+  enviarError(res, 500, 'Error interno del servidor');
+});
+
+/* Vercel importa el app; en local se levanta con `npm run dev` */
+module.exports = app;
+
+if (require.main === module) {
+  const puerto = process.env.PORT || 3000;
+  app.listen(puerto, () => console.log(`API POS escuchando en http://localhost:${puerto}`));
+}

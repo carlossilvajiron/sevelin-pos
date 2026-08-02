@@ -257,7 +257,7 @@ function renderOrdenesTabla(lista) {
     return `
     <tr class="row-in${pendiente ? ' fila-pendiente' : ''}">
       <td class="strong">${o.numero_ot}</td>
-      <td>${String(o.fecha_ingreso || '').slice(0, 10)}<br><small style="color:var(--text-muted);">${String(o.fecha_ingreso || '').slice(11, 16)}</small></td>
+      <td>${tsAChile(o.fecha_ingreso).slice(0, 10)}<br><small style="color:var(--text-muted);">${tsAChile(o.fecha_ingreso).slice(11)}</small></td>
       <td>${o.cliente_nombre || '—'}${o.cliente_telefono ? `<br><small style="color:var(--text-muted);">${o.cliente_telefono}</small>` : ''}</td>
       <td>${o.dispositivo_categoria || ''} ${o.dispositivo_modelo || ''}${o.dispositivo_sn ? `<br><small style="color:var(--text-muted);">S/N: ${o.dispositivo_sn}</small>` : ''}</td>
       <td>${(o.falla_reportada || '').slice(0, 70)}${(o.falla_reportada || '').length > 70 ? '…' : ''}</td>

@@ -17,6 +17,7 @@ let periodoModal = 'hoy';
 let ventaEditando = null;   // venta abierta en el modal de edición
 let itemsEditando = [];     // copia editable de sus ítems
 let filtroEstado = null;    // null = todas · 'PENDIENTE' = solo por pagar
+let ventasSeleccionadas = new Set();
 
 /* El medio de pago real: si la venta nació "Por Pagar" y luego se cobró,
    manda el metodo_pago_final. */
@@ -43,6 +44,7 @@ const elKpiPorPagarDetalle = document.getElementById('kpiPorPagarDetalle');
 const elKpiPorPagarCard = document.getElementById('kpiPorPagarCard');
 const elHistFiltroEstadoLabel = document.getElementById('histFiltroEstadoLabel');
 const elBtnQuitarFiltroPendientes = document.getElementById('btnQuitarFiltroPendientes');
+const elCheckTodasVentas = document.getElementById('checkTodasVentas');
 const elPayBar = document.getElementById('payBar');
 const elPayLegend = document.getElementById('payLegend');
 
@@ -177,6 +179,13 @@ function setupHistorialEventListeners() {
     overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.classList.remove('show'); });
   });
 
+  if (elCheckTodasVentas) elCheckTodasVentas.addEventListener('change', () => {
+    const visibles = ventasVisibles();
+    if (elCheckTodasVentas.checked) visibles.forEach(v => ventasSeleccionadas.add(String(v.id)));
+    else visibles.forEach(v => ventasSeleccionadas.delete(String(v.id)));
+    renderHistorialTabla(salesHistory);
+  });
+
   if (elBtnImportarVentas) elBtnImportarVentas.addEventListener('click', () => elInputImportarVentas?.click());
   if (elInputImportarVentas) elInputImportarVentas.addEventListener('change', handleImportarVentas);
 
@@ -189,7 +198,7 @@ function setupHistorialEventListeners() {
 // PERÍODOS
 // ============================================================
 function calcularRangoPeriodo(periodo) {
-  const hoy = new Date();
+  const hoy = fechaChile();   // hoy según America/Santiago
   const hoyISO = todayISO();
   let desde = hoyISO;
 
@@ -508,7 +517,7 @@ function exportarHistorialPDF(ventas, desde, hasta) {
 
   doc.setFontSize(9);
   doc.setTextColor(71, 85, 105);
-  doc.text(`Período: ${desde} a ${hasta}   ·   ${r.cantidad} venta(s) cobrada(s)   ·   Generado: ${todayISO()}`, 14, 21);
+  doc.text(`Período: ${desde} a ${hasta}   ·   ${r.cantidad} venta(s) cobrada(s)   ·   Generado: ${fechaHoraISOChile()} (hora de Chile)`, 14, 21);
 
   const anchoUtil = doc.internal.pageSize.getWidth() - 28;
   doc.setDrawColor(203, 213, 225);
@@ -538,16 +547,18 @@ function exportarHistorialPDF(ventas, desde, hasta) {
 
   doc.autoTable({
     startY: 52,
-    head: [['N° Orden', 'Fecha', 'Hora', 'Cliente', 'Método de Pago', 'Estado', 'Total', 'Costo', 'Utilidad']],
+    head: [['N° Orden', 'Fecha y Hora', 'Cliente', 'Método de Pago', 'Estado', 'Total', 'Costo', 'Utilidad']],
     body: filas.map(f => [
-      String(f['N° Orden']).padStart(5, '0'), f.Fecha, f.Hora, f.Cliente, f['Método de Pago'], f.Estado,
+      String(f['N° Orden']).padStart(5, '0'),
+      `${f.Fecha}${f.Hora ? ' ' + f.Hora : ''}`,
+      f.Cliente, f['Método de Pago'], f.Estado,
       fmtCLP(f.Total), fmtCLP(f['Costo Total']), fmtCLP(f.Utilidad)
     ]),
     styles: { fontSize: 8, cellPadding: 2.5 },
     headStyles: { fillColor: [30, 41, 59], textColor: [248, 250, 252] },
     alternateRowStyles: { fillColor: [248, 250, 252] },
-    columnStyles: { 6: { halign: 'right' }, 7: { halign: 'right' }, 8: { halign: 'right' } },
-    foot: [['', '', '', '', '', 'COBRADAS', fmtCLP(r.total), fmtCLP(r.costo), fmtCLP(r.utilidad)]],
+    columnStyles: { 5: { halign: 'right' }, 6: { halign: 'right' }, 7: { halign: 'right' } },
+    foot: [['', '', '', '', 'COBRADAS', fmtCLP(r.total), fmtCLP(r.costo), fmtCLP(r.utilidad)]],
     footStyles: { fillColor: [15, 23, 42], textColor: [251, 191, 36], fontStyle: 'bold', halign: 'right' }
   });
 
@@ -575,6 +586,8 @@ function parsearFechaImportada(valor) {
   return null;
 }
 
+/* Convierte una fila de planilla al formato que espera el backend.
+   Se respetan el correlativo, la fecha, la hora y los montos del archivo. */
 function mapearFilaVentaImportada(fila) {
   const claves = {};
   Object.keys(fila).forEach(k => { claves[normalizarEncabezadoVenta(k)] = fila[k]; });
@@ -586,26 +599,58 @@ function mapearFilaVentaImportada(fila) {
     return null;
   };
 
-  const fecha = parsearFechaImportada(buscar('fecha', 'date'));
-  const total = Number(buscar('total', 'monto')) || 0;
+  const fecha = parsearFechaImportada(buscar('fecha', 'fecha / hora', 'date'));
+  const total = Number(String(buscar('total', 'monto') || '').replace(/[^\d.-]/g, '')) || 0;
   if (!fecha || total <= 0) return null;
 
-  const costoTotal = Number(buscar('costo total', 'costo', 'cost')) || 0;
+  const costoTotal = Number(String(buscar('costo total', 'costo', 'cost') || '').replace(/[^\d.-]/g, '')) || 0;
+  const estadoTexto = String(buscar('estado') || '').toUpperCase();
+  const numeroOrden = buscar('n° orden', 'n orden', 'numero orden', 'nro orden', 'orden');
 
   return {
+    numero_orden: numeroOrden ? Number(String(numeroOrden).replace(/\D/g, '')) || null : null,
     fecha,
     hora: buscar('hora', 'time') || null,
     cliente: buscar('cliente', 'client', 'customer') || null,
     metodo_pago: buscar('metodo de pago', 'medio de pago', 'payment') || 'Efectivo',
-    items: [{
-      producto_id: null,
-      nombre: 'Venta importada',
-      cantidad: 1,
-      costo_unitario: costoTotal,
-      precio_unitario: total,
-      serial_number: null
-    }]
+    estado: estadoTexto.includes('PENDIENTE') ? 'PENDIENTE' : 'PAGADA',
+    total,
+    costo_total: costoTotal,
+    utilidad: Number(String(buscar('utilidad', 'profit') || '').replace(/[^\d.-]/g, '')) || (total - costoTotal),
+    items: []
   };
+}
+
+/* Lee el respaldo JSON generado por el propio sistema (o una lista de ventas)
+   y lo deja listo para reimportar con su detalle e ítems originales. */
+function mapearRespaldoJSON(texto) {
+  const datos = JSON.parse(texto);
+  const lista = Array.isArray(datos) ? datos : (Array.isArray(datos.ventas) ? datos.ventas : []);
+
+  return lista.map(v => ({
+    numero_orden: v.numero_orden ?? null,
+    fecha: String(v.fecha || '').slice(0, 10),
+    hora: v.hora || null,
+    cliente: v.cliente || null,
+    metodo_pago: v.metodo_pago || 'Efectivo',
+    metodo_pago_final: v.metodo_pago_final || null,
+    estado: v.estado || 'PAGADA',
+    fecha_pago: v.fecha_pago || null,
+    total: Number(v.total) || 0,
+    costo_total: Number(v.costo_total) || 0,
+    utilidad: Number(v.utilidad) || 0,
+    items: (v.items || []).map(it => ({
+      producto_id: it.producto_id || null,
+      sku: it.sku || null,
+      codigo_barras: it.codigo_barras || null,
+      nombre: it.nombre || 'Producto importado',
+      cantidad: Number(it.cantidad) || 1,
+      costo_unitario: Number(it.costo_unitario) || 0,
+      precio_unitario: Number(it.precio_unitario) || 0,
+      subtotal: Number(it.subtotal) || 0,
+      serial_number: it.serial_number || null
+    }))
+  })).filter(v => v.fecha);
 }
 
 async function handleImportarVentas(e) {
@@ -613,33 +658,43 @@ async function handleImportarVentas(e) {
   if (!file) return;
   if (!esAdmin()) { showToast('Solo el administrador puede importar ventas', 'err'); e.target.value = ''; return; }
 
-  try {
-    const buffer = await file.arrayBuffer();
-    const workbook = XLSX.read(buffer, { type: 'array', cellDates: true });
-    const hoja = workbook.Sheets[workbook.SheetNames[0]];
-    const filas = XLSX.utils.sheet_to_json(hoja, { defval: '' });
+  const esJSON = file.name.toLowerCase().endsWith('.json');
 
-    const ventasNuevas = filas.map(mapearFilaVentaImportada).filter(Boolean);
+  try {
+    let ventasNuevas = [];
+
+    if (esJSON) {
+      ventasNuevas = mapearRespaldoJSON(await file.text());
+    } else {
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: 'array', cellDates: true });
+      const hoja = workbook.Sheets[workbook.SheetNames[0]];
+      const filas = XLSX.utils.sheet_to_json(hoja, { defval: '' });
+      ventasNuevas = filas.map(mapearFilaVentaImportada).filter(Boolean);
+    }
 
     if (ventasNuevas.length === 0) {
-      showToast('El archivo no tiene filas válidas (revisa columnas Fecha y Total)', 'err');
+      showToast('El archivo no tiene ventas válidas (revisa Fecha y Total)', 'err');
       e.target.value = '';
       return;
     }
 
-    if (!confirm(`Se importarán ${ventasNuevas.length} venta(s), respetando las fechas del archivo. ¿Continuar?`)) {
-      e.target.value = '';
-      return;
+    const conDetalle = ventasNuevas.filter(v => v.items && v.items.length).length;
+    const mensaje = `Se importarán ${ventasNuevas.length} venta(s) respetando fechas, horas y correlativos del archivo.` +
+      (conDetalle ? `\n${conDetalle} incluyen detalle de productos: se descontará el stock de los que existan en el catálogo.` : '') +
+      '\n¿Continuar?';
+    if (!confirm(mensaje)) { e.target.value = ''; return; }
+
+    const r = await API.ventas.importar(ventasNuevas);
+
+    if (r.importadas > 0) showToast(`${r.importadas} venta(s) importada(s)`, 'ok');
+    if (r.omitidas > 0) {
+      console.warn('Ventas omitidas durante la importación:', r.errores);
+      showToast(`${r.omitidas} venta(s) omitida(s). Revisa la consola para el detalle.`, 'err');
     }
 
-    let importadas = 0;
-    for (const venta of ventasNuevas) {
-      await API.ventas.crear(venta);
-      importadas++;
-    }
-
-    showToast(`${importadas} venta(s) importada(s) con éxito`, 'ok');
     cargarHistorial();
+    if (typeof cargarProductos === 'function') cargarProductos();
   } catch (err) {
     console.error('Error al importar ventas:', err.message || err);
     showToast('Error al importar: ' + (err.message || 'formato no reconocido'), 'err');
@@ -659,6 +714,11 @@ async function cargarHistorial() {
 
   try {
     salesHistory = await API.ventas.listar(elHistFechaDesde?.value, elHistFechaHasta?.value);
+
+    // Se descartan las selecciones de ventas que ya no están en pantalla
+    const idsVisibles = new Set(salesHistory.map(v => String(v.id)));
+    ventasSeleccionadas.forEach(id => { if (!idsVisibles.has(id)) ventasSeleccionadas.delete(id); });
+
     renderHistorialTabla(salesHistory);
     renderResumenHistorial(salesHistory);
   } catch (err) {
@@ -706,6 +766,70 @@ function pagarVentaPendiente(id) {
   });
 }
 
+function ventasVisibles() {
+  return (salesHistory || []).filter(v => !filtroEstado || (v.estado || 'PAGADA') === filtroEstado);
+}
+
+/* ---------- Selección múltiple y descargas de respaldo ---------- */
+function actualizarBarraVentas() {
+  const cantidad = ventasSeleccionadas.size;
+
+  if (elCheckTodasVentas) {
+    const visibles = ventasVisibles();
+    elCheckTodasVentas.checked = visibles.length > 0 && visibles.every(v => ventasSeleccionadas.has(String(v.id)));
+  }
+
+  mostrarBarraSeleccion(cantidad, {
+    onJSON: descargarVentasJSON,
+    onCSV: descargarVentasExcel,
+    onLimpiar: () => { ventasSeleccionadas.clear(); renderHistorialTabla(salesHistory); }
+  });
+}
+
+function ventasMarcadas() {
+  return (salesHistory || []).filter(v => ventasSeleccionadas.has(String(v.id)));
+}
+
+/* Respaldo completo: incluye el detalle de cada venta para poder reimportarla */
+async function descargarVentasJSON() {
+  const seleccion = ventasMarcadas();
+  if (seleccion.length === 0) return;
+
+  showToast('Preparando respaldo…', '');
+  try {
+    const completas = [];
+    for (const venta of seleccion) {
+      const detalle = await API.ventas.detalle(venta.id);
+      completas.push(detalle);
+    }
+
+    const respaldo = {
+      sistema: 'Sevelin POS',
+      generado_en: fechaHoraISOChile(),
+      zona_horaria: 'America/Santiago',
+      cantidad: completas.length,
+      ventas: completas
+    };
+
+    descargarArchivo(`respaldo_ventas_${todayISO()}.json`, JSON.stringify(respaldo, null, 2));
+    showToast(`${completas.length} venta(s) exportada(s) en JSON`, 'ok');
+  } catch (err) {
+    console.error('Error al generar el respaldo:', err.message || err);
+    showToast(err.message || 'No se pudo generar el respaldo', 'err');
+  }
+}
+
+function descargarVentasExcel() {
+  const seleccion = ventasMarcadas();
+  if (seleccion.length === 0) return;
+
+  const filas = obtenerFilasHistorialParaExportar(seleccion);
+  const libro = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(libro, XLSX.utils.json_to_sheet(filas), 'Ventas');
+  XLSX.writeFile(libro, `ventas_seleccionadas_${todayISO()}.xlsx`);
+  showToast(`${filas.length} venta(s) exportada(s) a Excel`, 'ok');
+}
+
 function renderHistorialTabla(ventas) {
   if (!elHistorialTableBody) return;
 
@@ -715,14 +839,17 @@ function renderHistorialTabla(ventas) {
     const msg = filtroEstado === 'PENDIENTE'
       ? 'No hay ventas pendientes de pago en este período.'
       : 'No hay ventas en este período. Prueba con otro filtro o registra una venta nueva.';
-    elHistorialTableBody.innerHTML = `<tr class="empty-row"><td colspan="8">${msg}</td></tr>`;
+    elHistorialTableBody.innerHTML = `<tr class="empty-row"><td colspan="9">${msg}</td></tr>`;
+    actualizarBarraVentas();
     return;
   }
 
   elHistorialTableBody.innerHTML = lista.map(v => {
     const pendiente = estaPendiente(v);
+    const marcada = ventasSeleccionadas.has(String(v.id));
     return `
-    <tr class="row-in${pendiente ? ' fila-pendiente' : ''}">
+    <tr class="row-in${pendiente ? ' fila-pendiente' : ''}${marcada ? ' fila-marcada' : ''}">
+      <td class="col-check"><input type="checkbox" data-sel="${v.id}" ${marcada ? 'checked' : ''}></td>
       <td class="strong">#${String(v.numero_orden ?? v.id).padStart(5, '0')}</td>
       <td>${v.fecha || '-'}${v.hora ? ' · ' + v.hora : ''}</td>
       <td>${v.cliente || 'Consumidor Final'}</td>
@@ -742,6 +869,17 @@ function renderHistorialTabla(ventas) {
       </td>
     </tr>`;
   }).join('');
+
+  elHistorialTableBody.querySelectorAll('input[data-sel]').forEach(chk => {
+    chk.addEventListener('change', () => {
+      const id = String(chk.dataset.sel);
+      if (chk.checked) ventasSeleccionadas.add(id); else ventasSeleccionadas.delete(id);
+      chk.closest('tr')?.classList.toggle('fila-marcada', chk.checked);
+      actualizarBarraVentas();
+    });
+  });
+
+  actualizarBarraVentas();
 
   elHistorialTableBody.querySelectorAll('button[data-pagar]').forEach(btn => {
     btn.addEventListener('click', () => pagarVentaPendiente(btn.dataset.pagar));

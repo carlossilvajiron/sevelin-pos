@@ -26,6 +26,9 @@ const elProdCosto = document.getElementById('prodCosto');
 const elProdPrecio = document.getElementById('prodPrecio');
 const elProdStock = document.getElementById('prodStock');
 const elProdRequiereSN = document.getElementById('prodRequiereSN');
+const elProdStockMinimo = document.getElementById('prodStockMinimo');
+const elProdSinAlertaStock = document.getElementById('prodSinAlertaStock');
+const elProdStockActualizado = document.getElementById('prodStockActualizado');
 const elProdPeso = document.getElementById('prodPeso');
 const elProdAlto = document.getElementById('prodAlto');
 const elProdAncho = document.getElementById('prodAncho');
@@ -41,6 +44,20 @@ const elBtnImportarProductos = document.getElementById('btnImportarProductos');
 const elBtnExportarProductosExcel = document.getElementById('btnExportarProductosExcel');
 const elBtnExportarProductosCSV = document.getElementById('btnExportarProductosCSV');
 const elBtnExportarProductosPDF = document.getElementById('btnExportarProductosPDF');
+const elPanelBajoStock = document.getElementById('panelBajoStock');
+const elListaBajoStock = document.getElementById('listaBajoStock');
+const elBadgeBajoStockTotal = document.getElementById('badgeBajoStockTotal');
+const elBtnValorizacion = document.getElementById('btnValorizacion');
+const elModalValorizacion = document.getElementById('modalValorizacion');
+const elBtnCerrarValorizacion = document.getElementById('btnCerrarValorizacion');
+const elValorCostoInventario = document.getElementById('valorCostoInventario');
+const elValorVentaEstimada = document.getElementById('valorVentaEstimada');
+const elValorGanancia = document.getElementById('valorGanancia');
+const elValorMargen = document.getElementById('valorMargen');
+const elValorizacionDetalle = document.getElementById('valorizacionDetalle');
+const elValorizacionNota = document.getElementById('valorizacionNota');
+
+const STOCK_MINIMO_POR_DEFECTO = 3;
 
 document.addEventListener('DOMContentLoaded', () => {
   setupProductosEventListeners();
@@ -63,6 +80,12 @@ function setupProductosEventListeners() {
   if (elModalProducto) {
     elModalProducto.addEventListener('click', (e) => { if (e.target === elModalProducto) cerrarModalProducto(); });
   }
+
+  if (elBtnValorizacion) elBtnValorizacion.addEventListener('click', abrirValorizacion);
+  if (elBtnCerrarValorizacion) elBtnCerrarValorizacion.addEventListener('click', cerrarValorizacion);
+  if (elModalValorizacion) {
+    elModalValorizacion.addEventListener('click', (e) => { if (e.target === elModalValorizacion) cerrarValorizacion(); });
+  }
 }
 
 // ---------- Cargar productos desde el backend ----------
@@ -72,6 +95,7 @@ async function cargarProductos() {
   try {
     productsList = await API.productos.listar();
     handleBuscarProductoTabla();
+    renderPanelBajoStock();
   } catch (err) {
     console.error('Error al cargar productos:', err.message || err);
     showToast(err.message || 'Error al obtener el inventario', 'err');
@@ -80,6 +104,96 @@ async function cargarProductos() {
 
 // Alias usado por pos.js
 function loadProducts() { return cargarProductos(); }
+
+// ============================================================
+// CONTROL DE STOCK: alertas, badges y valorización
+// ============================================================
+function limiteStock(p) {
+  const limite = Number(p.stock_minimo);
+  return Number.isFinite(limite) && limite > 0 ? limite : STOCK_MINIMO_POR_DEFECTO;
+}
+
+/* Un producto entra en alerta solo si la alerta está activa para él.
+   Los servicios o ítems sin inventario físico se excluyen con el switch
+   "Desactivar alerta" del modal de producto. */
+function tieneAlertaStock(p) {
+  if (p.alerta_stock === false) return false;
+  return Number(p.stock || 0) <= limiteStock(p);
+}
+
+function badgeStock(p) {
+  const stock = Number(p.stock) || 0;
+  if (p.alerta_stock === false) return `<span class="stock-badge stock-ok">${stock}</span>`;
+  if (stock <= 0) return `<span class="stock-badge stock-agotado">Agotado</span>`;
+  if (stock <= limiteStock(p)) return `<span class="stock-badge stock-bajo">⚠️ ${stock}</span>`;
+  return `<span class="stock-badge stock-ok">${stock}</span>`;
+}
+
+function renderPanelBajoStock() {
+  if (!elPanelBajoStock) return;
+
+  const enAlerta = productsList.filter(tieneAlertaStock)
+    .sort((a, b) => (Number(a.stock) || 0) - (Number(b.stock) || 0));
+
+  if (enAlerta.length === 0) {
+    elPanelBajoStock.style.display = 'none';
+    return;
+  }
+
+  elPanelBajoStock.style.display = 'block';
+  if (elBadgeBajoStockTotal) elBadgeBajoStockTotal.textContent = String(enAlerta.length);
+  if (elListaBajoStock) {
+    elListaBajoStock.innerHTML = enAlerta.slice(0, 12).map(p => `
+      <div class="alerta-stock-item" data-abrir="${p.id}" title="Abrir ${p.nombre}">
+        <span>${p.nombre}</span>
+        <b>${Number(p.stock) || 0}</b>
+        <span style="color:var(--text-muted);">/ mín. ${limiteStock(p)}</span>
+      </div>
+    `).join('') + (enAlerta.length > 12
+      ? `<div class="alerta-stock-item" style="cursor:default;">y ${enAlerta.length - 12} más…</div>` : '');
+
+    elListaBajoStock.querySelectorAll('[data-abrir]').forEach(item => {
+      item.addEventListener('click', () => {
+        const producto = productsList.find(p => String(p.id) === item.dataset.abrir);
+        if (producto) abrirModalProducto(producto);
+      });
+    });
+  }
+}
+
+function calcularValorizacion() {
+  const costo = productsList.reduce((a, p) => a + (Number(p.stock) || 0) * (Number(p.costo_unitario) || 0), 0);
+  const venta = productsList.reduce((a, p) => a + (Number(p.stock) || 0) * (Number(p.precio_unitario) || 0), 0);
+  const ganancia = venta - costo;
+  const unidades = productsList.reduce((a, p) => a + (Number(p.stock) || 0), 0);
+  const sinCosto = productsList.filter(p => (Number(p.stock) || 0) > 0 && !(Number(p.costo_unitario) > 0)).length;
+
+  return { costo, venta, ganancia, margen: venta > 0 ? (ganancia / venta) * 100 : 0, unidades, sinCosto };
+}
+
+function abrirValorizacion() {
+  if (!elModalValorizacion) return;
+  const v = calcularValorizacion();
+
+  if (elValorCostoInventario) elValorCostoInventario.textContent = fmtCLP(v.costo);
+  if (elValorVentaEstimada) elValorVentaEstimada.textContent = fmtCLP(v.venta);
+  if (elValorGanancia) elValorGanancia.textContent = fmtCLP(v.ganancia);
+  if (elValorMargen) elValorMargen.textContent = `Margen estimado ${v.margen.toFixed(1)}%`;
+  if (elValorizacionDetalle) {
+    elValorizacionDetalle.textContent = `${productsList.length} producto(s) · ${v.unidades} unidad(es) en stock · actualizado al ${fechaHoraISOChile()}`;
+  }
+  if (elValorizacionNota) {
+    elValorizacionNota.textContent = v.sinCosto > 0
+      ? `Atención: ${v.sinCosto} producto(s) con stock no tienen costo unitario cargado, por lo que la ganancia proyectada aparece más alta de lo real.`
+      : '';
+  }
+
+  elModalValorizacion.classList.add('show');
+}
+
+function cerrarValorizacion() {
+  if (elModalValorizacion) elModalValorizacion.classList.remove('show');
+}
 
 // ---------- Render de la tabla ----------
 function resumenMedidas(p) {
@@ -95,7 +209,7 @@ function renderProductosTabla(items) {
   if (!elProductosTableBody) return;
 
   if (!items || items.length === 0) {
-    elProductosTableBody.innerHTML = '<tr class="empty-row"><td colspan="9">No hay productos en el inventario. Crea uno o importa tu CSV de Tiendanube.</td></tr>';
+    elProductosTableBody.innerHTML = '<tr class="empty-row"><td colspan="10">No hay productos en el inventario. Crea uno o importa tu CSV de Tiendanube.</td></tr>';
     return;
   }
 
@@ -109,7 +223,8 @@ function renderProductosTabla(items) {
       </td>
       <td class="admin-only">${fmtCLP(p.costo_unitario)}</td>
       <td>${fmtCLP(p.precio_unitario)}</td>
-      <td>${p.stock ?? 0}</td>
+      <td>${badgeStock(p)}</td>
+      <td class="stock-fecha">${p.stock_actualizado_en ? tsAChile(p.stock_actualizado_en) : '—'}</td>
       <td>${resumenMedidas(p)}</td>
       <td>${p.requiere_sn ? '✅ Sí' : '—'}</td>
       <td>
@@ -163,6 +278,9 @@ function handleBuscarProductoTabla() {
     case 'sin_medidas':
       resultado = resultado.filter(p => !Number(p.peso_kg) && !Number(p.alto_cm) && !Number(p.ancho_cm) && !Number(p.profundidad_cm));
       break;
+    case 'bajo_stock':
+      resultado = resultado.filter(tieneAlertaStock).sort((a, b) => (Number(a.stock) || 0) - (Number(b.stock) || 0));
+      break;
     default:
       resultado = resultado.slice().sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
   }
@@ -186,6 +304,13 @@ function abrirModalProducto(producto = null) {
     if (elProdPrecio) elProdPrecio.value = producto.precio_unitario || 0;
     if (elProdStock) elProdStock.value = producto.stock || 0;
     if (elProdRequiereSN) elProdRequiereSN.checked = !!producto.requiere_sn;
+    if (elProdStockMinimo) elProdStockMinimo.value = producto.stock_minimo ?? STOCK_MINIMO_POR_DEFECTO;
+    if (elProdSinAlertaStock) elProdSinAlertaStock.checked = producto.alerta_stock === false;
+    if (elProdStockActualizado) {
+      elProdStockActualizado.textContent = producto.stock_actualizado_en
+        ? `Última actualización de stock: ${tsAChile(producto.stock_actualizado_en)}`
+        : 'Última actualización de stock: sin registro previo.';
+    }
     if (elProdPeso) elProdPeso.value = producto.peso_kg || 0;
     if (elProdAlto) elProdAlto.value = producto.alto_cm || 0;
     if (elProdAncho) elProdAncho.value = producto.ancho_cm || 0;
@@ -199,6 +324,9 @@ function abrirModalProducto(producto = null) {
     [elProdCosto, elProdPrecio, elProdStock, elProdPeso, elProdAlto, elProdAncho, elProdProfundidad]
       .forEach(el => { if (el) el.value = 0; });
     if (elProdRequiereSN) elProdRequiereSN.checked = false;
+    if (elProdStockMinimo) elProdStockMinimo.value = STOCK_MINIMO_POR_DEFECTO;
+    if (elProdSinAlertaStock) elProdSinAlertaStock.checked = false;
+    if (elProdStockActualizado) elProdStockActualizado.textContent = 'Última actualización de stock: se registrará al guardar.';
   }
 
   elModalProducto.classList.add('show');
@@ -223,6 +351,8 @@ async function guardarProducto() {
     precio_unitario: Number(elProdPrecio?.value) || 0,
     stock: Number(elProdStock?.value) || 0,
     requiere_sn: !!(elProdRequiereSN && elProdRequiereSN.checked),
+    stock_minimo: Number(elProdStockMinimo?.value) || 0,
+    alerta_stock: !(elProdSinAlertaStock && elProdSinAlertaStock.checked),
     peso_kg: Number(elProdPeso?.value) || 0,
     alto_cm: Number(elProdAlto?.value) || 0,
     ancho_cm: Number(elProdAncho?.value) || 0,
@@ -346,6 +476,7 @@ function mapearFilaImportada(fila) {
     ancho_cm: aNumero(buscar('ancho (cm)', 'anchocm', 'ancho', 'width')),
     profundidad_cm: aNumero(buscar('profundidad (cm)', 'profundidadcm', 'profundidad', 'largo (cm)', 'largo', 'depth')),
     descripcion: buscar('descripcion', 'descripción', 'description', 'detalle') || null,
+    stock_minimo: aNumero(buscar('stock minimo', 'stock mínimo', 'minimo', 'alerta stock')) || 0,
     requiere_sn: false
   };
 }
@@ -425,7 +556,10 @@ function obtenerFilasProductosParaExportar() {
     'Alto (cm)': Number(p.alto_cm) || 0,
     'Ancho (cm)': Number(p.ancho_cm) || 0,
     'Profundidad (cm)': Number(p.profundidad_cm) || 0,
-    'Requiere S/N': p.requiere_sn ? 'Sí' : 'No'
+    'Requiere S/N': p.requiere_sn ? 'Sí' : 'No',
+    'Stock Mínimo': Number(p.stock_minimo) || 0,
+    'Alerta de Stock': p.alerta_stock === false ? 'Desactivada' : 'Activa',
+    'Última Act. Stock': p.stock_actualizado_en ? tsAChile(p.stock_actualizado_en) : ''
   }));
 }
 

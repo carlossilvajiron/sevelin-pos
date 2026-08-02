@@ -304,6 +304,16 @@ input[type="checkbox"] { width: auto; height: auto; accent-color: var(--blue); c
     color: #fff; border-color: rgba(255, 255, 255, .22); box-shadow: var(--shadow-sm);
 }
 
+/* Variante en bloque: usada en el modal de exportación para que los
+   botones de período queden parejos y con el borde bien encuadrado. */
+.chip-group.chip-group-block {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
+    gap: 6px; width: 100%; border-radius: var(--radius-sm); padding: 6px;
+}
+.chip-group.chip-group-block .chip {
+    border-radius: 8px; justify-content: center; padding: 0 10px; width: 100%;
+}
+
 /* ========== 6. KPIs + MEDIOS DE PAGO ========== */
 .kpi-grid {
     display: grid; gap: 14px; margin: 4px 0 18px;
@@ -490,13 +500,25 @@ input[type="checkbox"] { width: auto; height: auto; accent-color: var(--blue); c
 body.role-trabajador .admin-only { display: none !important; }
 .hidden { display: none !important; }
 
-/* Mientras no hay sesión, el fondo se difumina: el foco está en el PIN */
+/* Sin sesión, la aplicación no se muestra en absoluto: el login es una
+   pantalla completa y opaca, no una capa sobre el POS. */
 body:not(.role-admin):not(.role-trabajador) .app-header,
 body:not(.role-admin):not(.role-trabajador) .app-content {
-    filter: blur(4px); pointer-events: none; user-select: none;
+    display: none !important;
 }
 
-.modal-login-overlay { background: rgba(6, 11, 22, .88); }
+.modal-login-overlay {
+    background:
+        radial-gradient(900px 520px at 50% -10%, rgba(59, 130, 246, .22), transparent 60%),
+        radial-gradient(700px 420px at 100% 100%, rgba(251, 191, 36, .14), transparent 55%),
+        linear-gradient(180deg, #16233d 0%, #0b1220 100%);
+    backdrop-filter: none;
+}
+body.theme-light .modal-login-overlay {
+    background:
+        radial-gradient(900px 520px at 50% -10%, rgba(59, 130, 246, .16), transparent 60%),
+        linear-gradient(180deg, #eef3fb 0%, #dfe8f5 100%);
+}
 .modal-box.modal-login { max-width: 420px; text-align: center; padding: 34px 30px; }
 .login-brand h1 { font-size: 30px; font-weight: 800; color: var(--text-100); letter-spacing: -.02em; }
 .login-brand h1 span { color: var(--gold); }
@@ -686,7 +708,54 @@ a.doc-check.doc-ok:hover { transform: scale(1.1); }
 .ot-firma-box small { font-size: 11px; color: var(--text-muted); }
 .ot-corte { text-align: center; font-size: 11px; color: var(--text-muted); margin: 10px 0; }
 
-/* ========== 14. IMPRESIÓN ========== */
+/* ========== 14. SELECCIÓN MÚLTIPLE Y ALERTAS DE STOCK ========== */
+.col-check { width: 42px; text-align: center; }
+.data-table td.col-check { text-align: center; }
+.data-table input[type="checkbox"] { width: 17px; height: 17px; cursor: pointer; }
+.data-table tbody tr.fila-marcada { background: rgba(59, 130, 246, .12); }
+.data-table tbody tr.fila-marcada:hover { background: rgba(59, 130, 246, .18); }
+
+.barra-seleccion {
+    position: fixed; left: 50%; bottom: 24px; z-index: 250;
+    transform: translateX(-50%) translateY(24px);
+    display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+    padding: 14px 20px; border-radius: var(--radius);
+    background: var(--bg-800); border: 2px solid var(--border-strong);
+    box-shadow: 0 24px 60px rgba(3, 8, 20, .5);
+    opacity: 0; visibility: hidden; pointer-events: none;
+    transition: opacity var(--speed) ease, transform var(--speed) ease, visibility var(--speed);
+}
+.barra-seleccion.show { opacity: 1; visibility: visible; pointer-events: auto; transform: translateX(-50%) translateY(0); }
+.barra-seleccion-texto { font-size: 13.5px; font-weight: 700; color: var(--text-100); white-space: nowrap; }
+
+.alerta-stock-panel {
+    background: var(--tint-red); border: 1.5px solid rgba(239, 68, 68, .4);
+    border-radius: var(--radius); padding: 14px 18px; margin-bottom: 16px;
+}
+.alerta-stock-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.alerta-stock-lista { display: flex; gap: 10px; flex-wrap: wrap; }
+.alerta-stock-item {
+    display: flex; align-items: center; gap: 10px; cursor: pointer;
+    background: var(--bg-900); border: 1px solid var(--border); border-radius: var(--radius-sm);
+    padding: 8px 12px; font-size: 13px; color: var(--text-300);
+    transition: transform var(--speed), border-color var(--speed);
+}
+.alerta-stock-item:hover { transform: translateY(-2px); border-color: var(--red); color: var(--text-100); }
+.alerta-stock-item b { color: var(--red); font-size: 15px; }
+
+.stock-badge {
+    display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px;
+    border-radius: var(--radius-pill); font-size: 12.5px; font-weight: 700;
+}
+.stock-ok { background: var(--surface-soft); color: var(--text-300); }
+.stock-bajo { background: var(--tint-red); color: var(--red); border: 1px solid rgba(239, 68, 68, .45); }
+.stock-agotado { background: var(--red); color: #fff; }
+.stock-fecha { font-size: 11.5px; color: var(--text-muted); white-space: nowrap; }
+
+.doc-check.doc-falta { cursor: pointer; transition: transform var(--speed), background-color var(--speed); }
+.doc-check.doc-falta:hover { transform: scale(1.12); background: rgba(239, 68, 68, .3); }
+
+/* ========== 15. IMPRESIÓN ========== */
 :root { --ticket-ancho: 58mm; }
 #ticketContainer, #otPrintArea { display: none; }
 
@@ -748,4 +817,15 @@ a.doc-check.doc-ok:hover { transform: scale(1.1); }
     #ticketContainer .t-center { text-align: center; }
     #ticketContainer .t-small { font-size: 9px; }
     #ticketContainer .t-feed { height: 12mm; } /* espacio para el corte del papel */
+}
+
+/* Botón resaltado cuando se llega desde el ✖ de la tabla de compras */
+.btn.resaltado {
+    border-color: var(--red) !important;
+    box-shadow: 0 0 0 3px rgba(239, 68, 68, .28);
+    animation: latido 1.1s ease-in-out 2;
+}
+@keyframes latido {
+    0%, 100% { transform: none; }
+    50% { transform: scale(1.05); }
 }

@@ -47,7 +47,7 @@
         <button class="nav-btn admin-only" data-view="view-compras">🧾 Compras</button>
       </nav>
       <button class="theme-toggle" id="btnTema" title="Cambiar tema" aria-label="Cambiar tema">🌙</button>
-      <button class="btn btn-outline btn-sm" id="btnLogout" title="Cerrar sesión">🚪 Salir</button>
+      <button class="btn btn-outline btn-sm" id="btnLogout" title="Cerrar sesión">🚪 Cerrar Sesión</button>
     </div>
   </header>
 
@@ -227,8 +227,8 @@
           <div class="toolbar-group">
             <button class="btn btn-outline btn-sm" id="btnExportarHistorialExcel">📊 Exportar Excel</button>
             <button class="btn btn-outline btn-sm" id="btnExportarHistorialPDF">🧾 Exportar PDF</button>
-            <input type="file" id="inputImportarVentas" accept=".csv,.xlsx,.xls" style="display:none;">
-            <button class="btn btn-outline btn-sm" id="btnImportarVentas">📥 Importar Ventas</button>
+            <input type="file" id="inputImportarVentas" accept=".csv,.xlsx,.xls,.json" style="display:none;">
+            <button class="btn btn-outline btn-sm" id="btnImportarVentas">📥 Importar Registros (JSON/CSV)</button>
           </div>
           <div class="toolbar-group">
             <button class="btn btn-red btn-sm" id="btnEliminarPorPeriodo">🗓️ Eliminar por Período</button>
@@ -246,6 +246,7 @@
           <table class="data-table">
             <thead>
               <tr>
+                <th class="col-check"><input type="checkbox" id="checkTodasVentas" title="Seleccionar todo"></th>
                 <th># Orden</th>
                 <th>Fecha / Hora</th>
                 <th>Cliente</th>
@@ -257,7 +258,7 @@
               </tr>
             </thead>
             <tbody id="historialTableBody">
-              <tr class="empty-row"><td colspan="8">Cargando ventas...</td></tr>
+              <tr class="empty-row"><td colspan="9">Cargando ventas...</td></tr>
             </tbody>
           </table>
         </div>
@@ -468,8 +469,18 @@
           </div>
           <div class="toolbar-group">
             <button class="btn btn-primary" id="btnNuevoProducto">➕ Nuevo Producto</button>
+            <button class="btn btn-gold" id="btnValorizacion">💎 Valorización de Inventario</button>
             <button class="btn btn-red" id="btnEliminarTodosProductos">🗑️ Eliminar Todos</button>
           </div>
+        </div>
+
+        <!-- Resumen de productos con alerta de bajo stock -->
+        <div class="alerta-stock-panel" id="panelBajoStock" style="display:none;">
+          <div class="alerta-stock-head">
+            <span class="section-label" style="margin:0;">⚠️ Productos con bajo stock</span>
+            <span class="badge badge-red" id="badgeBajoStockTotal">0</span>
+          </div>
+          <div class="alerta-stock-lista" id="listaBajoStock"></div>
         </div>
 
         <div class="toolbar-row">
@@ -484,6 +495,7 @@
             <option value="sin_barcode">Ver: Sin Código de Barras</option>
             <option value="sin_costo">Ver: Sin Costo</option>
             <option value="sin_medidas">Ver: Sin Medidas</option>
+            <option value="bajo_stock">Ver: Bajo Stock</option>
           </select>
         </div>
 
@@ -507,13 +519,14 @@
                 <th class="admin-only">Costo</th>
                 <th>Precio</th>
                 <th>Stock</th>
+                <th>Últ. act. stock</th>
                 <th>Medidas (Al×An×Pr / Peso)</th>
                 <th>Requiere S/N</th>
                 <th style="text-align:right;">Acciones</th>
               </tr>
             </thead>
             <tbody id="productosTableBody">
-              <tr class="empty-row"><td colspan="9">Cargando productos...</td></tr>
+              <tr class="empty-row"><td colspan="10">Cargando productos...</td></tr>
             </tbody>
           </table>
         </div>
@@ -586,6 +599,7 @@
           <table class="data-table">
             <thead>
               <tr>
+                <th class="col-check"><input type="checkbox" id="checkTodasCompras" title="Seleccionar todo"></th>
                 <th>Fecha</th>
                 <th>Proveedor</th>
                 <th>Clasificación</th>
@@ -596,7 +610,7 @@
               </tr>
             </thead>
             <tbody id="comprasTableBody">
-              <tr class="empty-row"><td colspan="7">Cargando compras...</td></tr>
+              <tr class="empty-row"><td colspan="8">Cargando compras...</td></tr>
             </tbody>
           </table>
         </div>
@@ -651,10 +665,10 @@
         <span>Vuelto a entregar</span>
         <strong id="ventaExitosaVueltoMonto">$0</strong>
       </div>
-      <p class="modal-hint" id="ventaExitosaAviso">El ticket de 58 mm se envió a la impresora.</p>
+      <p class="modal-hint" id="ventaExitosaAviso">¿Deseas imprimir el ticket de 58 mm?</p>
       <div class="modal-foot" style="justify-content:center;">
-        <button class="btn btn-primary" id="btnPrintTicketVenta">🖨️ Imprimir de nuevo</button>
         <button class="btn btn-ghost" id="btnCloseVentaExitosa">Cerrar</button>
+        <button class="btn btn-primary" id="btnPrintTicketVenta">🖨️ Imprimir Ticket</button>
       </div>
     </div>
   </div>
@@ -696,6 +710,21 @@
           <input type="number" id="prodStock" min="0" step="1">
         </div>
       </div>
+
+      <span class="section-label" style="margin-top:18px;">Control de stock</span>
+      <div class="grid grid-2">
+        <div class="field">
+          <label>Alerta de bajo stock cuando queden</label>
+          <input type="number" id="prodStockMinimo" min="0" step="1" placeholder="3">
+        </div>
+        <div class="field">
+          <label class="field-ghost-label">Alerta</label>
+          <label class="sn-toggle">
+            <input type="checkbox" id="prodSinAlertaStock"> Desactivar alerta para este producto
+          </label>
+        </div>
+      </div>
+      <p class="modal-hint" id="prodStockActualizado">Última actualización de stock: —</p>
 
       <span class="section-label" style="margin-top:18px;">Medidas y envío (Tiendanube)</span>
       <div class="grid grid-4">
@@ -754,7 +783,7 @@
 
       <div style="margin: 18px 0 14px;">
         <span class="section-label">Período</span>
-        <div class="chip-group" id="modalPeriodoChips">
+        <div class="chip-group chip-group-block" id="modalPeriodoChips">
           <button class="chip active" data-periodo="hoy">Hoy</button>
           <button class="chip" data-periodo="semana">Esta Semana</button>
           <button class="chip" data-periodo="mes">Este Mes</button>
@@ -940,6 +969,48 @@
         <button class="btn btn-ghost" id="btnCancelarOtEntrega">Cancelar</button>
         <button class="btn btn-green" id="btnConfirmarOtEntrega">✅ Confirmar Entrega</button>
       </div>
+    </div>
+  </div>
+
+  <!-- MODAL: RESUMEN DE VALORIZACIÓN DE INVENTARIO -->
+  <div id="modalValorizacion" class="modal-overlay">
+    <div class="modal-box" style="max-width: 620px;">
+      <h2>💎 Resumen de Valorización de Inventario</h2>
+      <p class="modal-hint" id="valorizacionDetalle">Calculado sobre el stock actual del catálogo.</p>
+
+      <div class="kpi-grid" style="margin-top:18px;">
+        <div class="kpi-card kpi-gold">
+          <div class="kpi-label">📦 Costo Total del Inventario</div>
+          <div class="kpi-value" id="valorCostoInventario">$0</div>
+          <div class="kpi-foot">Stock × Costo unitario</div>
+        </div>
+        <div class="kpi-card kpi-blue">
+          <div class="kpi-label">🏷️ Venta Total Estimada</div>
+          <div class="kpi-value" id="valorVentaEstimada">$0</div>
+          <div class="kpi-foot">Stock × Precio de venta</div>
+        </div>
+        <div class="kpi-card kpi-green">
+          <div class="kpi-label">📈 Ganancia Proyectada</div>
+          <div class="kpi-value" id="valorGanancia">$0</div>
+          <div class="kpi-foot" id="valorMargen">Margen 0%</div>
+        </div>
+      </div>
+
+      <p class="modal-hint" id="valorizacionNota"></p>
+
+      <div class="modal-foot">
+        <button class="btn btn-ghost" id="btnCerrarValorizacion">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- BARRA FLOTANTE DE SELECCIÓN (Historial y Compras) -->
+  <div id="barraSeleccion" class="barra-seleccion">
+    <span class="barra-seleccion-texto" id="barraSeleccionTexto">0 registros seleccionados</span>
+    <div class="toolbar-group">
+      <button class="btn btn-outline btn-sm" id="btnDescargarJSON">🗄️ Descargar Seleccionadas (JSON)</button>
+      <button class="btn btn-green btn-sm" id="btnDescargarCSV">📊 Descargar Seleccionadas (CSV/Excel)</button>
+      <button class="btn btn-ghost btn-sm" id="btnLimpiarSeleccionBarra">✖ Quitar selección</button>
     </div>
   </div>
 

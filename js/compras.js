@@ -9,6 +9,8 @@ let comprasList = [];
 let editandoCompraId = null;
 let filtroDocumentos = '';           // '' | 'sin_documento' | 'sin_comprobante'
 let archivosPendientes = { url_documento: null, url_comprobante: null };
+let comprasSeleccionadas = new Set();
+let campoArchivoPendiente = null;   // atajo desde el ✖ de la tabla
 
 const CLASIFICACIONES_COMPRA = [
   'Mercadería / Productos para Reventa',
@@ -27,6 +29,7 @@ const elComprasClasificacionFiltro = document.getElementById('comprasClasificaci
 const elBtnFiltrarCompras = document.getElementById('btnFiltrarCompras');
 const elComprasChipsDocs = document.getElementById('comprasChipsDocs');
 const elComprasPeriodoLabel = document.getElementById('comprasPeriodoLabel');
+const elCheckTodasCompras = document.getElementById('checkTodasCompras');
 
 const elKpiComprasMes = document.getElementById('kpiComprasMes');
 const elKpiComprasMesDetalle = document.getElementById('kpiComprasMesDetalle');
@@ -60,7 +63,7 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function setDefaultDatesCompras() {
-  const hoy = new Date();
+  const hoy = fechaChile();
   if (elComprasDesde) elComprasDesde.value = isoLocal(new Date(hoy.getFullYear(), hoy.getMonth(), 1));
   if (elComprasHasta) elComprasHasta.value = todayISO();
 }
@@ -83,6 +86,12 @@ function setupComprasEventListeners() {
     if (!el) return;
     el.addEventListener('click', () => { if (typeof el.showPicker === 'function') { try { el.showPicker(); } catch (_) {} } });
     el.addEventListener('change', cargarCompras);
+  });
+
+  if (elCheckTodasCompras) elCheckTodasCompras.addEventListener('change', () => {
+    if (elCheckTodasCompras.checked) comprasList.forEach(c => comprasSeleccionadas.add(String(c.id)));
+    else comprasSeleccionadas.clear();
+    renderComprasTabla(comprasList);
   });
 
   if (elBtnNuevaCompra) elBtnNuevaCompra.addEventListener('click', () => abrirModalCompra());
@@ -110,6 +119,10 @@ async function cargarCompras() {
 
   try {
     comprasList = await API.compras.listar(filtros);
+
+    const idsVisibles = new Set(comprasList.map(c => String(c.id)));
+    comprasSeleccionadas.forEach(id => { if (!idsVisibles.has(id)) comprasSeleccionadas.delete(id); });
+
     renderComprasTabla(comprasList);
     renderKpisCompras(comprasList);
   } catch (err) {
@@ -119,7 +132,7 @@ async function cargarCompras() {
 }
 
 function renderKpisCompras(lista) {
-  const hoy = new Date();
+  const hoy = fechaChile();
   const inicioMes = isoLocal(new Date(hoy.getFullYear(), hoy.getMonth(), 1));
   const finMes = isoLocal(new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0));
 
@@ -143,38 +156,121 @@ function renderKpisCompras(lista) {
   }
 }
 
-function marcaDocumento(url, etiqueta) {
-  if (!url) return `<span class="doc-check doc-falta" title="${etiqueta} no cargada">✖</span>`;
+function marcaDocumento(url, etiqueta, compraId, campo) {
+  if (!url) {
+    // Clic en la ✖ → abre la compra con el foco puesto en ese archivo
+    return `<span class="doc-check doc-falta" data-subir="${compraId}" data-campo="${campo}"
+              title="Falta ${etiqueta}. Clic para subirla ahora.">✖</span>`;
+  }
   return `<a class="doc-check doc-ok" href="${url}" target="_blank" rel="noopener" title="Ver ${etiqueta}">✔</a>`;
+}
+
+/* ---------- Selección múltiple ---------- */
+function actualizarBarraCompras() {
+  const cantidad = comprasSeleccionadas.size;
+
+  if (elCheckTodasCompras) {
+    elCheckTodasCompras.checked = comprasList.length > 0 &&
+      comprasList.every(c => comprasSeleccionadas.has(String(c.id)));
+  }
+
+  mostrarBarraSeleccion(cantidad, {
+    onJSON: descargarComprasJSON,
+    onCSV: descargarComprasExcel,
+    onLimpiar: () => { comprasSeleccionadas.clear(); renderComprasTabla(comprasList); }
+  });
+}
+
+function comprasMarcadas() {
+  return comprasList.filter(c => comprasSeleccionadas.has(String(c.id)));
+}
+
+function descargarComprasJSON() {
+  const seleccion = comprasMarcadas();
+  if (seleccion.length === 0) return;
+
+  const respaldo = {
+    sistema: 'Sevelin POS',
+    modulo: 'Compras y Gastos',
+    generado_en: fechaHoraISOChile(),
+    zona_horaria: 'America/Santiago',
+    cantidad: seleccion.length,
+    compras: seleccion
+  };
+
+  descargarArchivo(`respaldo_compras_${todayISO()}.json`, JSON.stringify(respaldo, null, 2));
+  showToast(`${seleccion.length} compra(s) exportada(s) en JSON`, 'ok');
+}
+
+function descargarComprasExcel() {
+  const seleccion = comprasMarcadas();
+  if (seleccion.length === 0) return;
+
+  const filas = seleccion.map(c => ({
+    Fecha: tsAChile(c.fecha),
+    Proveedor: c.proveedor || '',
+    Clasificación: c.clasificacion || '',
+    Detalle: c.descripcion || '',
+    'Costo Total': Number(c.costo_total) || 0,
+    'Factura / Boleta': c.url_documento || 'SIN DOCUMENTO',
+    'Comprobante de Pago': c.url_comprobante || 'SIN COMPROBANTE'
+  }));
+
+  const libro = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(libro, XLSX.utils.json_to_sheet(filas), 'Compras');
+  XLSX.writeFile(libro, `compras_seleccionadas_${todayISO()}.xlsx`);
+  showToast(`${filas.length} compra(s) exportada(s) a Excel`, 'ok');
 }
 
 function renderComprasTabla(lista) {
   if (!elComprasTableBody) return;
 
   if (!lista || lista.length === 0) {
-    elComprasTableBody.innerHTML = '<tr class="empty-row"><td colspan="7">No hay compras registradas con estos filtros.</td></tr>';
+    elComprasTableBody.innerHTML = '<tr class="empty-row"><td colspan="8">No hay compras registradas con estos filtros.</td></tr>';
+    actualizarBarraCompras();
     return;
   }
 
-  elComprasTableBody.innerHTML = lista.map(c => `
-    <tr class="row-in">
-      <td>${String(c.fecha || '').slice(0, 10)}</td>
+  elComprasTableBody.innerHTML = lista.map(c => {
+    const marcada = comprasSeleccionadas.has(String(c.id));
+    return `
+    <tr class="row-in${marcada ? ' fila-marcada' : ''}">
+      <td class="col-check"><input type="checkbox" data-sel="${c.id}" ${marcada ? 'checked' : ''}></td>
+      <td>${tsAChile(c.fecha)}</td>
       <td>
         ${c.proveedor || '—'}
         ${c.descripcion ? `<br><small style="color:var(--text-muted);">${c.descripcion}</small>` : ''}
       </td>
       <td><span class="badge badge-blue">${c.clasificacion}</span></td>
       <td class="num strong">${fmtCLP(c.costo_total)}</td>
-      <td>${marcaDocumento(c.url_documento, 'Factura / Boleta')}</td>
-      <td>${marcaDocumento(c.url_comprobante, 'Comprobante de pago')}</td>
+      <td>${marcaDocumento(c.url_documento, 'Factura / Boleta', c.id, 'url_documento')}</td>
+      <td>${marcaDocumento(c.url_comprobante, 'Comprobante de pago', c.id, 'url_comprobante')}</td>
       <td>
         <div class="cell-actions">
           <button class="btn btn-icon btn-icon-edit" data-editar="${c.id}" title="Editar compra">${ICO_EDITAR_COMPRA}</button>
           <button class="btn btn-icon btn-icon-del" data-eliminar="${c.id}" title="Eliminar compra">${ICO_ELIMINAR_COMPRA}</button>
         </div>
       </td>
-    </tr>
-  `).join('');
+    </tr>`;
+  }).join('');
+
+  elComprasTableBody.querySelectorAll('input[data-sel]').forEach(chk => {
+    chk.addEventListener('change', () => {
+      const id = String(chk.dataset.sel);
+      if (chk.checked) comprasSeleccionadas.add(id); else comprasSeleccionadas.delete(id);
+      chk.closest('tr')?.classList.toggle('fila-marcada', chk.checked);
+      actualizarBarraCompras();
+    });
+  });
+
+  elComprasTableBody.querySelectorAll('[data-subir]').forEach(marca => {
+    marca.addEventListener('click', () => {
+      const compra = comprasList.find(c => String(c.id) === marca.dataset.subir);
+      if (compra) abrirModalCompra(compra, marca.dataset.campo);
+    });
+  });
+
+  actualizarBarraCompras();
 
   elComprasTableBody.querySelectorAll('button[data-editar]').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -188,9 +284,10 @@ function renderComprasTabla(lista) {
 }
 
 // ---------- Modal de compra ----------
-function abrirModalCompra(compra = null) {
+function abrirModalCompra(compra = null, campoFoco = null) {
   if (!esAdmin()) { showToast('Solo el administrador gestiona las compras', 'err'); return; }
   archivosPendientes = { url_documento: null, url_comprobante: null };
+  campoArchivoPendiente = campoFoco;
 
   if (compra) {
     editandoCompraId = compra.id;
@@ -216,12 +313,29 @@ function abrirModalCompra(compra = null) {
   actualizarEstadoArchivo('url_documento');
   actualizarEstadoArchivo('url_comprobante');
   if (elModalCompra) elModalCompra.classList.add('show');
-  setTimeout(() => elCompraProveedor?.focus(), 80);
+
+  setTimeout(() => {
+    if (campoArchivoPendiente === 'url_documento') {
+      elBtnSubirDocumento?.focus();
+      elBtnSubirDocumento?.classList.add('resaltado');
+      elCompraArchivoDocumento?.click();
+    } else if (campoArchivoPendiente === 'url_comprobante') {
+      elBtnSubirComprobante?.focus();
+      elBtnSubirComprobante?.classList.add('resaltado');
+      elCompraArchivoComprobante?.click();
+    } else {
+      elCompraProveedor?.focus();
+    }
+    campoArchivoPendiente = null;
+  }, 120);
 }
 
 function cerrarModalCompra() {
   if (elModalCompra) elModalCompra.classList.remove('show');
   editandoCompraId = null;
+  campoArchivoPendiente = null;
+  elBtnSubirDocumento?.classList.remove('resaltado');
+  elBtnSubirComprobante?.classList.remove('resaltado');
 }
 
 function actualizarEstadoArchivo(campo, texto) {

@@ -43,6 +43,17 @@ document.addEventListener('DOMContentLoaded', () => {
   renderCart();
 });
 
+/* Tras validar el PIN, el cursor queda en el buscador para escanear de inmediato */
+document.addEventListener('pos:sesion-iniciada', () => {
+  if (elPosFecha) elPosFecha.value = todayISO();
+  enfocarBuscador();
+});
+
+/* Y también al volver a la pestaña de POS */
+document.addEventListener('pos:vista-activa', (e) => {
+  if (e.detail && e.detail.vista === 'view-pos') enfocarBuscador();
+});
+
 function setupPosEventListeners() {
   if (elBuscarProducto) {
     elBuscarProducto.addEventListener('input', handleBuscarProducto);
@@ -72,8 +83,7 @@ function setupPosEventListeners() {
   // Limpia SOLO los campos de ingreso; el carrito queda intacto
   if (elBtnLimpiarSeleccion) elBtnLimpiarSeleccion.addEventListener('click', () => {
     limpiarFormularioItem();
-    if (elSugerencias) elSugerencias.classList.remove('show');
-    elItemNombre?.focus();
+    enfocarBuscador();
     showToast('Selección limpiada', '');
   });
 
@@ -187,7 +197,20 @@ function agregarItemAlCarrito() {
 
   renderCart();
   limpiarFormularioItem();
-  if (elItemNombre) elItemNombre.focus();
+  enfocarBuscador();   // listo para el siguiente escaneo
+}
+
+/* Deja el cursor en el buscador y selecciona su contenido, de modo que el
+   siguiente disparo de la pistola reemplace lo que haya escrito. */
+function enfocarBuscador() {
+  if (!elBuscarProducto) return;
+  if (elSugerencias) elSugerencias.classList.remove('show');
+  setTimeout(() => {
+    try {
+      elBuscarProducto.focus();
+      elBuscarProducto.select();
+    } catch (_) {}
+  }, 40);
 }
 
 function limpiarFormularioItem() {
@@ -272,9 +295,8 @@ async function confirmarVenta(metodoPago, datosPago = {}) {
 
   mostrarModalVentaExitosa(venta, datosPago);
 
-  // Impresión directa: el ticket sale apenas se registra la venta.
-  // OJO: el vuelto NO viaja al ticket, solo se muestra en pantalla.
-  imprimirTicketVenta(venta, venta.items);
+  // La impresión ya NO es automática: el modal ofrece "Cerrar" o
+  // "Imprimir Ticket". El vuelto solo se muestra en pantalla.
 
   if (typeof cargarHistorial === 'function') cargarHistorial();
   if (typeof cargarProductos === 'function') cargarProductos();
@@ -298,7 +320,7 @@ function mostrarModalVentaExitosa(venta, datosPago = {}) {
   if (elVentaExitosaAviso) {
     elVentaExitosaAviso.textContent = pendiente
       ? 'No suma a los totales hasta que la cobres desde el Historial.'
-      : 'El ticket de 58 mm se envió a la impresora.';
+      : '¿Deseas imprimir el ticket de 58 mm de esta venta?';
   }
 
   if (elModalVentaExitosa) elModalVentaExitosa.classList.add('show');
