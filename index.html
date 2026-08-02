@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sistema POS - Sevelin</title>
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+
+  <!-- ============================================================
+       MODAL DE ACCESO (PIN). Se muestra al cargar si no hay sesión.
+       La sesión vive en sessionStorage: se pierde al cerrar la pestaña.
+       ============================================================ -->
+  <div id="modalLogin" class="modal-overlay modal-login-overlay">
+    <div class="modal-box modal-login">
+      <div class="login-brand">
+        <h1>SEVELIN <span>POS</span></h1>
+        <p class="modal-hint">Ingresa tu PIN para abrir la caja.</p>
+      </div>
+
+      <form id="formLogin" autocomplete="off">
+        <div class="field">
+          <label for="pinInput">PIN de acceso</label>
+          <input type="password" id="pinInput" class="pin-input" inputmode="numeric" maxlength="6"
+                 placeholder="••••" autocomplete="off" required>
+        </div>
+        <button type="submit" class="btn btn-primary btn-block btn-lg" id="btnIngresar">Ingresar</button>
+      </form>
+
+      <div id="loginError" class="error-msg hidden">PIN incorrecto. Reintenta.</div>
+      <p class="modal-hint login-foot">La sesión se cierra sola al cerrar el navegador.</p>
+    </div>
+  </div>
+
+  <!-- Navegación Principal -->
+  <header class="app-header">
+    <div class="logo">
+      <h1>SEVELIN <span>POS</span></h1>
+      <span id="userRoleBadge" class="badge badge-blue">Invitado</span>
+      <span id="syncBadge" class="sync-badge sync-pending">⏳ Conectando…</span>
+    </div>
+
+    <div class="header-right">
+      <nav class="nav-links">
+        <button class="nav-btn active" data-view="view-pos">🛒 POS / Ventas</button>
+        <button class="nav-btn admin-only" data-view="view-productos">📦 Productos</button>
+        <button class="nav-btn" data-view="view-historial">📋 Historial</button>
+      </nav>
+      <button class="theme-toggle" id="btnTema" title="Cambiar tema" aria-label="Cambiar tema">🌙</button>
+      <button class="btn btn-outline btn-sm" id="btnLogout" title="Cerrar sesión">🚪 Cerrar Sesión</button>
+    </div>
+  </header>
+
+  <main class="app-content">
+
+    <!-- VISTA 1: POS / VENTAS -->
+    <section id="view-pos" class="view-section active">
+      <div class="pos-stack">
+
+        <div class="card pos-entry-card">
+          <h2>Ingresar Producto</h2>
+
+          <div class="field" style="position:relative; margin-top:14px;">
+            <label>Buscar Producto (Nombre / SKU / Barcode)</label>
+            <input type="text" id="posBuscarProducto" placeholder="Escriba o escanee para buscar en catálogo..." autocomplete="off">
+            <div id="posSugerencias" class="suggestions-box"></div>
+          </div>
+
+          <div class="pos-entry-row">
+            <div class="field pos-entry-nombre">
+              <label>Producto *</label>
+              <input type="text" id="itemNombre" placeholder="Nombre del producto">
+            </div>
+            <div class="field pos-entry-sm">
+              <label>Cantidad *</label>
+              <input type="number" id="itemCantidad" min="1" value="1">
+            </div>
+            <!-- El costo solo lo ve y edita el administrador -->
+            <div class="field pos-entry-sm admin-only">
+              <label>Costo Unit. ($)</label>
+              <input type="number" id="itemCosto" min="0" step="1" placeholder="0">
+            </div>
+            <div class="field pos-entry-sm">
+              <label>Precio Unit. ($) *</label>
+              <input type="number" id="itemPrecio" min="0" step="1" placeholder="0">
+            </div>
+            <div class="field pos-entry-sn">
+              <label class="field-ghost-label">S/N</label>
+              <label class="sn-toggle">
+                <input type="checkbox" id="checkTieneSN"> Tiene S/N
+              </label>
+            </div>
+            <div class="pos-entry-btn">
+              <label class="field-ghost-label">&nbsp;</label>
+              <button class="btn btn-primary" id="btnAgregarItem">➕ Agregar</button>
+            </div>
+          </div>
+
+          <div class="pos-entry-foot">
+            <input type="text" id="itemSN" placeholder="Ingrese S/N o Código de Serie" style="display:none;">
+            <span id="utilidadPreview" class="admin-only"></span>
+          </div>
+        </div>
+
+        <div class="card pos-cart-card">
+          <div class="pos-cart-head">
+            <h2>Carrito de Venta</h2>
+            <div class="pos-cart-meta">
+              <div class="field">
+                <label>Fecha</label>
+                <input type="date" id="posFecha">
+              </div>
+              <div class="field">
+                <label>Cliente</label>
+                <input type="text" id="posCliente" placeholder="Cliente Opcional / Particular">
+              </div>
+            </div>
+          </div>
+
+          <div class="table-wrapper">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Cant</th>
+                  <th>Producto / S/N</th>
+                  <th>P. Unit</th>
+                  <th>Subtotal</th>
+                  <th style="text-align:right;">Acción</th>
+                </tr>
+              </thead>
+              <tbody id="cartTableBody">
+                <tr class="empty-row"><td colspan="5">El carrito está vacío</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="pos-cart-foot">
+            <div class="pos-cart-total">
+              <span>Total</span>
+              <strong id="cartTotalText">$0</strong>
+            </div>
+            <button class="btn btn-green btn-lg" id="btnFinalizarVenta">💳 Finalizar Venta</button>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- VISTA 2: PRODUCTOS (solo admin) -->
+    <section id="view-productos" class="view-section admin-only">
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <h2>Catálogo de Productos</h2>
+            <p class="subtitle">Precios, stock, medidas y descripción (compatible con Tiendanube).</p>
+          </div>
+          <div class="toolbar-group">
+            <button class="btn btn-primary" id="btnNuevoProducto">➕ Nuevo Producto</button>
+            <button class="btn btn-red" id="btnEliminarTodosProductos">🗑️ Eliminar Todos</button>
+          </div>
+        </div>
+
+        <div class="toolbar-row">
+          <div class="field">
+            <input type="text" id="buscarProductoTabla" placeholder="Filtrar por nombre, SKU o código de barras...">
+          </div>
+          <select id="ordenProductos" title="Ordenar / Filtrar">
+            <option value="">Orden: Nombre A-Z</option>
+            <option value="precio_desc">Precio: Mayor a Menor</option>
+            <option value="precio_asc">Precio: Menor a Mayor</option>
+            <option value="sin_sku">Ver: Sin SKU</option>
+            <option value="sin_barcode">Ver: Sin Código de Barras</option>
+            <option value="sin_costo">Ver: Sin Costo</option>
+            <option value="sin_medidas">Ver: Sin Medidas</option>
+          </select>
+        </div>
+
+        <div class="toolbar-bar" style="margin-bottom:16px;">
+          <div class="toolbar-group">
+            <input type="file" id="inputImportarProductos" accept=".csv,.xlsx,.xls" style="display:none;">
+            <button class="btn btn-outline btn-sm" id="btnImportarProductos">📥 Importar Tiendanube (CSV/Excel)</button>
+            <button class="btn btn-outline btn-sm" id="btnExportarProductosExcel">📊 Exportar Excel</button>
+            <button class="btn btn-outline btn-sm" id="btnExportarProductosCSV">📄 Exportar CSV</button>
+            <button class="btn btn-outline btn-sm" id="btnExportarProductosPDF">🧾 Exportar PDF</button>
+          </div>
+        </div>
+
+        <div class="table-wrapper">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>SKU</th>
+                <th>Código Barras</th>
+                <th>Nombre / Descripción</th>
+                <th class="admin-only">Costo</th>
+                <th>Precio</th>
+                <th>Stock</th>
+                <th>Medidas (Al×An×Pr / Peso)</th>
+                <th>Requiere S/N</th>
+                <th style="text-align:right;">Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="productosTableBody">
+              <tr class="empty-row"><td colspan="9">Cargando productos...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- VISTA 3: HISTORIAL DE VENTAS -->
+    <section id="view-historial" class="view-section">
+
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <h2>Historial de Ventas</h2>
+            <p class="subtitle" id="histPeriodoLabel">Mostrando las ventas de hoy</p>
+          </div>
+          <div class="chip-group" id="histChips">
+            <button class="chip active" data-periodo="hoy">Hoy</button>
+            <button class="chip" data-periodo="semana">Esta Semana</button>
+            <button class="chip" data-periodo="mes">Este Mes</button>
+            <button class="chip" data-periodo="anio">Este Año</button>
+            <button class="chip" data-periodo="personalizado">📅 Personalizado</button>
+          </div>
+        </div>
+
+        <div class="toolbar-row" id="histRangoRow">
+          <div class="field" style="max-width:260px;">
+            <label>Desde</label>
+            <input type="date" id="histFechaDesde">
+          </div>
+          <div class="field" style="max-width:260px;">
+            <label>Hasta</label>
+            <input type="date" id="histFechaHasta">
+          </div>
+          <div class="field" style="flex:0 0 auto; max-width:220px;">
+            <label class="field-ghost-label">Buscar</label>
+            <button class="btn btn-primary" id="btnFiltrarHistorial">🔍 Buscar Ventas</button>
+          </div>
+        </div>
+
+        <div class="kpi-grid">
+          <div class="kpi-card kpi-blue">
+            <div class="kpi-label">💰 Ventas Totales</div>
+            <div class="kpi-value" id="kpiVentasTotales">$0</div>
+            <div class="kpi-foot" id="kpiCantidadVentas">0 ventas registradas</div>
+          </div>
+          <!-- Utilidad y costo: solo administrador -->
+          <div class="kpi-card kpi-green admin-only">
+            <div class="kpi-label">📈 Utilidad Total</div>
+            <div class="kpi-value" id="kpiUtilidadTotal">$0</div>
+            <div class="kpi-foot" id="kpiMargen">Margen 0%</div>
+          </div>
+          <div class="kpi-card kpi-gold admin-only">
+            <div class="kpi-label">📦 Costo Total</div>
+            <div class="kpi-value" id="kpiCostoTotal">$0</div>
+            <div class="kpi-foot">Costo de lo vendido</div>
+          </div>
+          <div class="kpi-card kpi-violet">
+            <div class="kpi-label">🧾 Ticket Promedio</div>
+            <div class="kpi-value" id="kpiTicketPromedio">$0</div>
+            <div class="kpi-foot" id="kpiRangoTexto">—</div>
+          </div>
+        </div>
+
+        <div class="pay-panel">
+          <span class="section-label">Medios de pago del período</span>
+          <div class="pay-bar" id="payBar"></div>
+          <div class="pay-legend" id="payLegend">
+            <span class="pay-item" style="color:var(--text-muted);">Sin ventas en el período</span>
+          </div>
+        </div>
+
+        <div class="toolbar-bar admin-only">
+          <div class="toolbar-group">
+            <button class="btn btn-outline btn-sm" id="btnExportarHistorialExcel">📊 Exportar Excel</button>
+            <button class="btn btn-outline btn-sm" id="btnExportarHistorialPDF">🧾 Exportar PDF</button>
+            <input type="file" id="inputImportarVentas" accept=".csv,.xlsx,.xls" style="display:none;">
+            <button class="btn btn-outline btn-sm" id="btnImportarVentas">📥 Importar Ventas</button>
+          </div>
+          <div class="toolbar-group">
+            <button class="btn btn-red btn-sm" id="btnEliminarPorPeriodo">🗓️ Eliminar por Período</button>
+            <button class="btn btn-red btn-sm" id="btnEliminarHistorialCompleto">🗑️ Eliminar Todo</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="table-wrapper">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th># Orden</th>
+                <th>Fecha / Hora</th>
+                <th>Cliente</th>
+                <th>Medio Pago</th>
+                <th class="num">Total</th>
+                <th class="num admin-only">Utilidad</th>
+                <th style="text-align:right;">Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="historialTableBody">
+              <tr class="empty-row"><td colspan="7">Cargando ventas...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- MODAL: CONFIRMAR PAGO -->
+  <div id="modalPago" class="modal-overlay">
+    <div class="modal-box" style="max-width: 440px;">
+      <h2>Confirmar Pago</h2>
+      <p class="modal-hint">Selecciona el método de pago para procesar la transacción.</p>
+
+      <div class="field" style="margin: 18px 0;">
+        <label>Método de Pago *</label>
+        <select id="modalMetodoPago">
+          <option value="">Seleccionar...</option>
+          <option value="Efectivo">Efectivo</option>
+          <option value="Transferencia">Transferencia</option>
+          <option value="Tarjeta Débito">Tarjeta Débito</option>
+          <option value="Tarjeta Crédito">Tarjeta Crédito</option>
+          <option value="Por Pagar">Por Pagar</option>
+        </select>
+      </div>
+
+      <div class="modal-foot">
+        <button class="btn btn-ghost" id="btnCancelarPago">Cancelar</button>
+        <button class="btn btn-green" id="btnConfirmarPago">Confirmar Venta</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: VENTA REGISTRADA (con reimpresión inmediata) -->
+  <div id="modalVentaExitosa" class="modal-overlay">
+    <div class="modal-box modal-centro" style="max-width: 440px;">
+      <div class="icon-success">🎉</div>
+      <h2>¡Venta registrada!</h2>
+      <p id="ventaExitosaDetalle" class="modal-hint">Orden #000 · Total $0</p>
+      <p class="modal-hint">El ticket de 58 mm se envió a la impresora.</p>
+      <div class="modal-foot" style="justify-content:center;">
+        <button class="btn btn-primary" id="btnPrintTicketVenta">🖨️ Imprimir de nuevo</button>
+        <button class="btn btn-ghost" id="btnCloseVentaExitosa">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: NUEVO / EDITAR PRODUCTO (campos Tiendanube) -->
+  <div id="modalProducto" class="modal-overlay">
+    <div class="modal-box modal-lg">
+      <h2 id="productoFormTitle">Nuevo Producto</h2>
+      <p class="modal-hint">Las medidas y la descripción usan el mismo formato del CSV de Tiendanube.</p>
+      <input type="hidden" id="prodEditId">
+
+      <div class="grid grid-2" style="margin-top:18px;">
+        <div class="field">
+          <label>SKU</label>
+          <input type="text" id="prodSku" placeholder="Código interno">
+        </div>
+        <div class="field">
+          <label>Código de Barras</label>
+          <input type="text" id="prodBarcode" placeholder="EAN / Scanner">
+        </div>
+      </div>
+
+      <div class="field" style="margin-top:12px;">
+        <label>Nombre del Producto *</label>
+        <input type="text" id="prodNombre" placeholder="Descripción corta del producto">
+      </div>
+
+      <div class="grid grid-3" style="margin-top:12px;">
+        <div class="field">
+          <label>Costo Unit.</label>
+          <input type="number" id="prodCosto" min="0" step="1">
+        </div>
+        <div class="field">
+          <label>Precio Unit.</label>
+          <input type="number" id="prodPrecio" min="0" step="1">
+        </div>
+        <div class="field">
+          <label>Stock</label>
+          <input type="number" id="prodStock" min="0" step="1">
+        </div>
+      </div>
+
+      <span class="section-label" style="margin-top:18px;">Medidas y envío (Tiendanube)</span>
+      <div class="grid grid-4">
+        <div class="field">
+          <label>Peso (kg)</label>
+          <input type="number" id="prodPeso" min="0" step="0.001">
+        </div>
+        <div class="field">
+          <label>Alto (cm)</label>
+          <input type="number" id="prodAlto" min="0" step="0.1">
+        </div>
+        <div class="field">
+          <label>Ancho (cm)</label>
+          <input type="number" id="prodAncho" min="0" step="0.1">
+        </div>
+        <div class="field">
+          <label>Profundidad (cm)</label>
+          <input type="number" id="prodProfundidad" min="0" step="0.1">
+        </div>
+      </div>
+
+      <div class="field" style="margin-top:12px;">
+        <label>Descripción</label>
+        <textarea id="prodDescripcion" rows="3" placeholder="Detalle largo del producto (opcional)"></textarea>
+      </div>
+
+      <div style="margin: 18px 0 0;">
+        <label class="sn-toggle" style="width:fit-content;">
+          <input type="checkbox" id="prodRequiereSN"> El producto requiere registrar S/N al vender
+        </label>
+      </div>
+
+      <div class="modal-foot">
+        <button class="btn btn-ghost" id="btnCancelarProducto">Cancelar</button>
+        <button class="btn btn-primary" id="btnGuardarProducto">Guardar Producto</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: DETALLE DE VENTA -->
+  <div id="modalDetalleVenta" class="modal-overlay">
+    <div class="modal-box" style="max-width: 600px;">
+      <h2>Detalle de Venta</h2>
+      <div id="detalleVentaContent" style="margin: 18px 0;"></div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" id="btnCerrarDetalleVenta">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: PERÍODO (Exportar / Eliminar) -->
+  <div id="modalExportarHistorial" class="modal-overlay">
+    <div class="modal-box" style="max-width: 540px;">
+      <h2 id="tituloModalPeriodo">Exportar Historial de Ventas</h2>
+      <p class="modal-hint" id="hintModalPeriodo">Elige el período y luego el formato de exportación.</p>
+
+      <div style="margin: 18px 0 14px;">
+        <span class="section-label">Período</span>
+        <div class="chip-group" id="modalPeriodoChips">
+          <button class="chip active" data-periodo="hoy">Hoy</button>
+          <button class="chip" data-periodo="semana">Esta Semana</button>
+          <button class="chip" data-periodo="mes">Este Mes</button>
+          <button class="chip" data-periodo="anio">Este Año</button>
+          <button class="chip" data-periodo="personalizado">📅 Personalizado</button>
+        </div>
+      </div>
+
+      <div class="grid grid-2" id="exportFechasPersonalizadas" style="display:none; margin-bottom:8px;">
+        <div class="field">
+          <label>Desde</label>
+          <input type="date" id="exportFechaDesde">
+        </div>
+        <div class="field">
+          <label>Hasta</label>
+          <input type="date" id="exportFechaHasta">
+        </div>
+      </div>
+
+      <p class="modal-hint" id="modalPeriodoResumen">Período seleccionado: hoy</p>
+
+      <div class="modal-foot">
+        <button class="btn btn-ghost" id="btnCancelarExportar">Cancelar</button>
+        <button class="btn btn-outline" id="btnExportarExcelModal">📊 Excel</button>
+        <button class="btn btn-green" id="btnExportarPDFModal">🧾 PDF</button>
+        <button class="btn btn-red" id="btnConfirmarEliminarPeriodo" style="display:none;">🗑️ Eliminar Período</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: EDITAR VENTA (cabecera + ítems, solo admin) -->
+  <div id="modalEditarVenta" class="modal-overlay">
+    <div class="modal-box modal-lg">
+      <h2>✏️ Editar Venta #<span id="editVentaNumero">00000</span></h2>
+      <p class="modal-hint">
+        Puedes corregir la cabecera y también los productos vendidos. Al guardar, el sistema
+        recalcula total, costo y utilidad de esta orden.
+      </p>
+      <input type="hidden" id="editVentaId">
+
+      <div class="grid grid-3" style="margin-top:18px;">
+        <div class="field">
+          <label>Fecha</label>
+          <input type="date" id="editVentaFecha">
+        </div>
+        <div class="field">
+          <label>Cliente</label>
+          <input type="text" id="editVentaCliente" placeholder="Cliente Opcional / Particular">
+        </div>
+        <div class="field">
+          <label>Método de Pago</label>
+          <select id="editVentaMetodoPago">
+            <option value="Efectivo">Efectivo</option>
+            <option value="Transferencia">Transferencia</option>
+            <option value="Tarjeta Débito">Tarjeta Débito</option>
+            <option value="Tarjeta Crédito">Tarjeta Crédito</option>
+            <option value="Por Pagar">Por Pagar</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="edit-items-head">
+        <span class="section-label" style="margin:0;">Productos de esta venta</span>
+        <button class="btn btn-outline btn-sm" id="btnAgregarItemVenta">➕ Agregar producto</button>
+      </div>
+      <div id="editVentaItemsList" class="edit-items-container"></div>
+
+      <div id="editVentaTotales" class="edit-items-totales"></div>
+
+      <div class="modal-foot">
+        <button class="btn btn-ghost" id="btnCancelarEditarVenta">Cancelar</button>
+        <button class="btn btn-primary" id="btnGuardarEdicionVenta">Guardar Cambios</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Contenedor usado SOLO para imprimir el ticket (ver print.js) -->
+  <div id="ticketContainer"></div>
+
+  <!-- Notificación flotante -->
+  <div id="toast" class="toast"></div>
+
+  <!-- Librerías de exportación (Supabase ya NO se carga en el navegador) -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
+
+  <!-- Orden importante: api.js y config.js primero -->
+  <script src="js/api.js"></script>
+  <script src="js/config.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/productos.js"></script>
+  <script src="js/historial.js"></script>
+  <script src="js/pos.js"></script>
+  <script src="js/print.js"></script>
+
+</body>
+</html>
