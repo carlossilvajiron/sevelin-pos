@@ -782,6 +782,7 @@ function actualizarBarraVentas() {
   mostrarBarraSeleccion(cantidad, {
     onJSON: descargarVentasJSON,
     onCSV: descargarVentasExcel,
+    onEliminar: eliminarVentasSeleccionadas,
     onLimpiar: () => { ventasSeleccionadas.clear(); renderHistorialTabla(salesHistory); }
   });
 }
@@ -828,6 +829,32 @@ function descargarVentasExcel() {
   XLSX.utils.book_append_sheet(libro, XLSX.utils.json_to_sheet(filas), 'Ventas');
   XLSX.writeFile(libro, `ventas_seleccionadas_${todayISO()}.xlsx`);
   showToast(`${filas.length} venta(s) exportada(s) a Excel`, 'ok');
+}
+
+/* Borrado masivo: el backend repone el stock de los productos vendidos
+   (buscándolos por id, SKU o código de barras) antes de eliminar. */
+async function eliminarVentasSeleccionadas() {
+  const seleccion = ventasMarcadas();
+  if (seleccion.length === 0) return;
+
+  if (!confirm(`¿Estás seguro de que deseas eliminar los ${seleccion.length} registros seleccionados? Esta acción no se puede deshacer.`)) return;
+  if (!confirm('El stock de los productos vendidos volverá al inventario. ¿Confirmas la eliminación?')) return;
+
+  try {
+    const r = await API.ventas.eliminarLote(seleccion.map(v => v.id));
+
+    ventasSeleccionadas.clear();
+    ocultarBarraSeleccion();
+
+    showToast(`${r.eliminadas} venta(s) eliminada(s)` +
+      (r.stock_repuesto ? ` · stock repuesto en ${r.stock_repuesto} producto(s)` : ''), 'ok');
+
+    await cargarHistorial();                                  // tabla y KPIs al día
+    if (typeof cargarProductos === 'function') cargarProductos();  // inventario al día
+  } catch (err) {
+    console.error('Error al eliminar las ventas:', err.message || err);
+    showToast(err.message || 'No se pudieron eliminar las ventas', 'err');
+  }
 }
 
 function renderHistorialTabla(ventas) {

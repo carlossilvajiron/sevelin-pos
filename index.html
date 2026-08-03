@@ -43,6 +43,8 @@
         <button class="nav-btn active" data-view="view-pos">🛒 POS</button>
         <button class="nav-btn" data-view="view-historial">📋 Historial</button>
         <button class="nav-btn" data-view="view-taller">🔧 Servicio Técnico</button>
+        <button class="nav-btn" data-view="view-encargos">💰 Abonos y Encargos</button>
+        <button class="nav-btn" data-view="view-repuestos">🔩 Repuestos Taller</button>
         <button class="nav-btn admin-only" data-view="view-productos">📦 Productos</button>
         <button class="nav-btn admin-only" data-view="view-compras">🧾 Compras</button>
       </nav>
@@ -64,7 +66,10 @@
 
           <div class="field" style="position:relative; margin-top:14px;">
             <label>Buscar Producto (Nombre / SKU / Barcode)</label>
-            <input type="text" id="posBuscarProducto" placeholder="Escriba o escanee para buscar en catálogo..." autocomplete="off">
+            <div class="input-scan">
+              <input type="text" id="posBuscarProducto" placeholder="Escriba o escanee para buscar en catálogo..." autocomplete="off">
+              <button class="btn btn-outline btn-scan" data-scan="posBuscarProducto" title="Escanear con la cámara">📷</button>
+            </div>
             <div id="posSugerencias" class="suggestions-box"></div>
           </div>
 
@@ -118,8 +123,19 @@
                 <label>Cliente</label>
                 <input type="text" id="posCliente" placeholder="Cliente Opcional / Particular">
               </div>
+              <div class="field" style="position:relative; min-width:260px;">
+                <label>
+                  <label class="sn-toggle" style="height:auto; padding:0; background:none; border:none;">
+                    <input type="checkbox" id="posSincronizarOT"> Sincronizar OT a esta venta
+                  </label>
+                </label>
+                <input type="text" id="posBuscarOT" placeholder="OT-000012, cliente o equipo..." autocomplete="off" disabled>
+                <div id="posSugerenciasOT" class="suggestions-box"></div>
+              </div>
             </div>
           </div>
+
+          <p class="modal-hint" id="posOTVinculada" style="display:none;"></p>
 
           <div class="table-wrapper">
             <table class="data-table">
@@ -288,25 +304,31 @@
         <div class="wizard-panel active" data-paso="1">
           <div class="grid grid-2">
             <div class="field">
-              <label>RUT / ID del cliente</label>
+              <label>Nombre y apellidos <span class="obligatorio">*</span></label>
+              <input type="text" id="otClienteNombre" placeholder="Único dato obligatorio">
+            </div>
+            <div class="field">
+              <label>RUT / ID <span class="opcional">(Opcional)</span></label>
               <input type="text" id="otClienteRut" placeholder="12.345.678-9">
             </div>
             <div class="field">
-              <label>Nombre y apellidos *</label>
-              <input type="text" id="otClienteNombre" placeholder="Nombre completo">
-            </div>
-            <div class="field">
-              <label>Teléfono</label>
+              <label>Teléfono <span class="opcional">(Opcional)</span></label>
               <input type="tel" id="otClienteTelefono" placeholder="+56 9 ...">
             </div>
             <div class="field">
-              <label>Correo</label>
+              <label>Correo <span class="opcional">(Opcional)</span></label>
               <input type="email" id="otClienteCorreo" placeholder="cliente@correo.cl">
             </div>
           </div>
           <div class="field" style="margin-top:12px;">
-            <label>Dirección</label>
+            <label>Dirección <span class="opcional">(Opcional)</span></label>
             <input type="text" id="otClienteDireccion" placeholder="Calle, número, comuna">
+          </div>
+
+          <!-- Atajos para completar los datos del cliente sin trabarse en el mesón -->
+          <div class="row-actions" style="margin-top:16px;">
+            <button class="btn btn-outline btn-sm" id="btnCopiarWhatsApp">💬 Copiar datos para WhatsApp</button>
+            <button class="btn btn-outline btn-sm" id="btnImprimirFicha">🖨️ Imprimir Ficha Manual</button>
           </div>
         </div>
 
@@ -397,6 +419,11 @@
               <textarea id="otObsTecnico" rows="3" placeholder="Estado visual, revisión inicial..."></textarea>
             </div>
           </div>
+          <div class="field" style="margin-top:12px;">
+            <label>🔒 Observaciones internas del técnico <span class="opcional">(privadas: nunca se imprimen)</span></label>
+            <textarea id="otObsInternas" rows="2" placeholder="Ej: se aplicó reflow, software X usado, cuidado con el flex del conector"></textarea>
+          </div>
+
           <div style="margin-top:16px;">
             <label class="sn-toggle" style="width:fit-content;">
               <input type="checkbox" id="otAceptaResponsabilidad" checked>
@@ -485,7 +512,10 @@
 
         <div class="toolbar-row">
           <div class="field">
-            <input type="text" id="buscarProductoTabla" placeholder="Filtrar por nombre, SKU o código de barras...">
+            <div class="input-scan">
+              <input type="text" id="buscarProductoTabla" placeholder="Filtrar por nombre, SKU o código de barras...">
+              <button class="btn btn-outline btn-scan" data-scan="buscarProductoTabla" title="Escanear con la cámara">📷</button>
+            </div>
           </div>
           <select id="ordenProductos" title="Ordenar / Filtrar">
             <option value="">Orden: Nombre A-Z</option>
@@ -583,6 +613,13 @@
               <option value="Gastos Operativos (Servicios, Arriendo, etc.)">Gastos Operativos (Servicios, Arriendo, etc.)</option>
             </select>
           </div>
+          <div class="field" style="min-width:240px;">
+            <label>Buscar</label>
+            <div class="input-scan">
+              <input type="text" id="comprasBuscar" placeholder="Proveedor, detalle o código...">
+              <button class="btn btn-outline btn-scan" data-scan="comprasBuscar" title="Escanear con la cámara">📷</button>
+            </div>
+          </div>
           <div class="field" style="flex:0 0 auto;">
             <label class="field-ghost-label">Buscar</label>
             <button class="btn btn-primary" id="btnFiltrarCompras">🔍 Filtrar</button>
@@ -611,6 +648,138 @@
             </thead>
             <tbody id="comprasTableBody">
               <tr class="empty-row"><td colspan="8">Cargando compras...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- ============================================================
+         VISTA 6: ABONOS Y ENCARGOS
+         ============================================================ -->
+    <section id="view-encargos" class="view-section">
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <h2>Abonos y Encargos</h2>
+            <p class="subtitle" id="encargosResumenLabel">Pedidos, reservas y servicios con seña.</p>
+          </div>
+          <div class="toolbar-group">
+            <div class="chip-group" id="encargosChips">
+              <button class="chip active" data-estado="">Todos</button>
+              <button class="chip" data-estado="PENDIENTE">Pendientes</button>
+              <button class="chip" data-estado="PARCIAL">Con abono</button>
+              <button class="chip" data-estado="PAGADO">Pagados</button>
+            </div>
+            <button class="btn btn-primary" id="btnNuevoEncargo">➕ Nuevo Encargo</button>
+          </div>
+        </div>
+
+        <div class="kpi-grid">
+          <div class="kpi-card kpi-blue">
+            <div class="kpi-label">📦 Encargos Activos</div>
+            <div class="kpi-value" id="kpiEncargosActivos">0</div>
+            <div class="kpi-foot">Pendientes o con abono parcial</div>
+          </div>
+          <div class="kpi-card kpi-green">
+            <div class="kpi-label">💵 Total Abonado</div>
+            <div class="kpi-value" id="kpiEncargosAbonado">$0</div>
+            <div class="kpi-foot">Dinero recibido en señas</div>
+          </div>
+          <div class="kpi-card kpi-red">
+            <div class="kpi-label">⏳ Saldo por Cobrar</div>
+            <div class="kpi-value" id="kpiEncargosSaldo">$0</div>
+            <div class="kpi-foot" id="kpiEncargosSaldoDetalle">Sobre los encargos activos</div>
+          </div>
+        </div>
+
+        <div class="toolbar-row">
+          <div class="field">
+            <input type="text" id="encargosBuscar" placeholder="Buscar por cliente, OT o descripción...">
+          </div>
+          <button class="btn btn-outline btn-sm" id="btnRecargarEncargos">🔄 Actualizar</button>
+        </div>
+
+        <div class="table-wrapper">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Cliente / OT</th>
+                <th>Descripción</th>
+                <th class="num">Total</th>
+                <th class="num">Abonado</th>
+                <th class="num">Saldo</th>
+                <th>Estado</th>
+                <th style="text-align:right;">Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="encargosTableBody">
+              <tr class="empty-row"><td colspan="7">Cargando encargos...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- ============================================================
+         VISTA 7: REPUESTOS INTERNOS DE TALLER
+         ============================================================ -->
+    <section id="view-repuestos" class="view-section">
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <h2>Repuestos Internos de Taller</h2>
+            <p class="subtitle" id="repuestosResumenLabel">Inventario propio del taller, fuera del catálogo comercial.</p>
+          </div>
+          <div class="toolbar-group">
+            <button class="btn btn-gold" id="btnValorizacionRepuestos">💎 Valorización</button>
+            <button class="btn btn-primary admin-only" id="btnNuevoRepuesto">➕ Nuevo Repuesto</button>
+          </div>
+        </div>
+
+        <div class="alerta-stock-panel" id="panelBajoStockRepuestos" style="display:none;">
+          <div class="alerta-stock-head">
+            <span class="section-label" style="margin:0;">⚠️ Repuestos con bajo stock</span>
+            <span class="badge badge-red" id="badgeBajoStockRepuestos">0</span>
+          </div>
+          <div class="alerta-stock-lista" id="listaBajoStockRepuestos"></div>
+        </div>
+
+        <div class="toolbar-row">
+          <div class="field">
+            <input type="text" id="repuestosBuscar" placeholder="Buscar por modelo, categoría, área o ubicación...">
+          </div>
+          <div class="field" style="min-width:200px;">
+            <select id="repuestosFiltroArea">
+              <option value="">Todas las áreas</option>
+            </select>
+          </div>
+          <div class="field" style="min-width:200px;">
+            <select id="repuestosFiltroCategoria">
+              <option value="">Todas las categorías</option>
+            </select>
+          </div>
+          <button class="btn btn-outline btn-sm" id="btnRecargarRepuestos">🔄 Actualizar</button>
+        </div>
+
+        <div class="table-wrapper">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Área / Tipo</th>
+                <th>Categoría Base</th>
+                <th>Modelo Exacto</th>
+                <th class="admin-only num">Costo</th>
+                <th class="num">Precio + M.O.</th>
+                <th>Stock</th>
+                <th>Ubicación</th>
+                <th style="text-align:right;">Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="repuestosTableBody">
+              <tr class="empty-row"><td colspan="8">Cargando repuestos...</td></tr>
             </tbody>
           </table>
         </div>
@@ -666,6 +835,9 @@
         <strong id="ventaExitosaVueltoMonto">$0</strong>
       </div>
       <p class="modal-hint" id="ventaExitosaAviso">¿Deseas imprimir el ticket de 58 mm?</p>
+      <label class="sn-toggle" style="width:fit-content; margin:12px auto;">
+        <input type="checkbox" id="chkQrResena"> Incluir QR de reseña de Google
+      </label>
       <div class="modal-foot" style="justify-content:center;">
         <button class="btn btn-ghost" id="btnCloseVentaExitosa">Cerrar</button>
         <button class="btn btn-primary" id="btnPrintTicketVenta">🖨️ Imprimir Ticket</button>
@@ -754,6 +926,9 @@
       <div style="margin: 18px 0 0;">
         <label class="sn-toggle" style="width:fit-content;">
           <input type="checkbox" id="prodRequiereSN"> El producto requiere registrar S/N al vender
+        </label>
+        <label class="sn-toggle" style="width:fit-content; margin-top:10px;">
+          <input type="checkbox" id="prodEsRepuesto"> Es repuesto / insumo de taller
         </label>
       </div>
 
@@ -1010,13 +1185,348 @@
     <div class="toolbar-group">
       <button class="btn btn-outline btn-sm" id="btnDescargarJSON">🗄️ Descargar Seleccionadas (JSON)</button>
       <button class="btn btn-green btn-sm" id="btnDescargarCSV">📊 Descargar Seleccionadas (CSV/Excel)</button>
+      <button class="btn btn-red btn-sm admin-only" id="btnEliminarSeleccionadas">🗑️ Eliminar Seleccionadas</button>
       <button class="btn btn-ghost btn-sm" id="btnLimpiarSeleccionBarra">✖ Quitar selección</button>
+    </div>
+  </div>
+
+
+  <!-- MODAL: ESCÁNER DE CÓDIGO DE BARRAS CON CÁMARA -->
+  <div id="modalEscaner" class="modal-overlay">
+    <div class="modal-box" style="max-width: 520px;">
+      <h2>📷 Escanear Código de Barras</h2>
+      <p class="modal-hint" id="escanerEstado">Apunta la cámara al código del producto.</p>
+
+      <div id="escanerLector" class="escaner-lector"></div>
+
+      <div class="field" style="margin-top:14px;">
+        <label>¿No enfoca? Escribe el código a mano</label>
+        <input type="text" id="escanerManual" placeholder="Código de barras / SKU" autocomplete="off">
+      </div>
+
+      <div class="modal-foot">
+        <button class="btn btn-ghost" id="btnCerrarEscaner">Cancelar</button>
+        <button class="btn btn-outline" id="btnCambiarCamara">🔄 Cambiar cámara</button>
+        <button class="btn btn-primary" id="btnUsarCodigoManual">Usar este código</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: ETIQUETA DE CÓDIGO DE BARRAS (58 mm) -->
+  <div id="modalEtiqueta" class="modal-overlay">
+    <div class="modal-box" style="max-width: 540px;">
+      <h2>🏷️ Imprimir Etiqueta</h2>
+      <p class="modal-hint" id="etiquetaProducto">—</p>
+
+      <span class="section-label" style="margin-top:16px;">¿Qué datos incluir?</span>
+      <div class="grid grid-3">
+        <label class="sn-toggle"><input type="checkbox" id="etqNombre" checked> Nombre del producto</label>
+        <label class="sn-toggle"><input type="checkbox" id="etqPrecio" checked> Precio de venta ($)</label>
+        <label class="sn-toggle"><input type="checkbox" id="etqBarcode" checked> Código de barras</label>
+      </div>
+
+      <div class="grid grid-2" style="margin-top:14px;">
+        <div class="field">
+          <label>Cantidad de etiquetas</label>
+          <input type="number" id="etqCantidad" min="1" max="60" value="1">
+        </div>
+        <div class="field">
+          <label>Ancho del papel</label>
+          <select id="etqAncho">
+            <option value="58mm">58 mm (Tuu Pro 2 / Haulmer)</option>
+            <option value="80mm">80 mm</option>
+          </select>
+        </div>
+      </div>
+
+      <span class="section-label" style="margin-top:16px;">Vista previa</span>
+      <div id="etiquetaPreview" class="etiqueta-preview"></div>
+
+      <div class="modal-foot">
+        <button class="btn btn-ghost" id="btnCerrarEtiqueta">Cerrar</button>
+        <button class="btn btn-primary" id="btnImprimirEtiqueta">🖨️ Imprimir Etiqueta</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: NUEVO / EDITAR ENCARGO -->
+  <div id="modalEncargo" class="modal-overlay">
+    <div class="modal-box modal-lg">
+      <h2 id="encargoFormTitle">Nuevo Encargo</h2>
+      <p class="modal-hint">Puedes vincularlo a una Orden de Trabajo existente o crearlo suelto (pedidos, repuestos, compras por encargo).</p>
+      <input type="hidden" id="encargoEditId">
+
+      <div class="field" style="position:relative; margin-top:18px;">
+        <label>Vincular a una OT (opcional)</label>
+        <input type="text" id="encargoBuscarOT" placeholder="Escribe el número de OT, cliente o equipo..." autocomplete="off">
+        <div id="encargoSugerenciasOT" class="suggestions-box"></div>
+      </div>
+      <p class="modal-hint" id="encargoOTSeleccionada" style="display:none;"></p>
+
+      <div class="grid grid-3" style="margin-top:12px;">
+        <div class="field">
+          <label>Cliente *</label>
+          <input type="text" id="encargoCliente" placeholder="Nombre y apellidos">
+        </div>
+        <div class="field">
+          <label>RUT / ID (opcional)</label>
+          <input type="text" id="encargoRut" placeholder="12.345.678-9">
+        </div>
+        <div class="field">
+          <label>Teléfono (opcional)</label>
+          <input type="tel" id="encargoTelefono" placeholder="+56 9 ...">
+        </div>
+      </div>
+
+      <div class="field" style="margin-top:12px;">
+        <label>Descripción del encargo *</label>
+        <textarea id="encargoDescripcion" rows="2" placeholder="Ej: Pantalla Lenovo 15.6 por encargo / reparación placa madre"></textarea>
+      </div>
+
+      <div class="grid grid-3" style="margin-top:12px;">
+        <div class="field">
+          <label>Monto Total ($) *</label>
+          <input type="number" id="encargoMontoTotal" min="0" step="1" placeholder="0">
+        </div>
+        <div class="field">
+          <label>Abono Inicial ($)</label>
+          <input type="number" id="encargoAbonoInicial" min="0" step="1" placeholder="0">
+        </div>
+        <div class="field">
+          <label>Medio de pago del abono</label>
+          <select id="encargoMetodoPago">
+            <option value="Efectivo">Efectivo</option>
+            <option value="Transferencia">Transferencia</option>
+            <option value="Tarjeta Débito">Tarjeta Débito</option>
+            <option value="Tarjeta Crédito">Tarjeta Crédito</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="pago-vuelto" id="encargoSaldoBox" style="margin-top:14px;">
+        <span>Saldo pendiente por cobrar</span>
+        <strong id="encargoSaldoTexto">$0</strong>
+      </div>
+
+      <div class="field" style="margin-top:12px;">
+        <label>Observaciones (opcional)</label>
+        <input type="text" id="encargoObservaciones" placeholder="Fecha estimada de llegada, condiciones, etc.">
+      </div>
+
+      <div class="modal-foot">
+        <button class="btn btn-ghost" id="btnCancelarEncargo">Cancelar</button>
+        <button class="btn btn-primary" id="btnGuardarEncargo">Guardar Encargo</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: REGISTRAR ABONO -->
+  <div id="modalAbono" class="modal-overlay">
+    <div class="modal-box" style="max-width: 480px;">
+      <h2>💵 Registrar Abono</h2>
+      <p class="modal-hint" id="abonoResumen">—</p>
+      <input type="hidden" id="abonoEncargoId">
+
+      <div class="pago-total" style="margin-top:16px;">
+        <span>Saldo pendiente</span>
+        <strong id="abonoSaldoActual">$0</strong>
+      </div>
+
+      <div class="grid grid-2">
+        <div class="field">
+          <label>Monto del abono ($) *</label>
+          <input type="number" id="abonoMonto" min="0" step="1" placeholder="0">
+        </div>
+        <div class="field">
+          <label>Medio de pago</label>
+          <select id="abonoMetodoPago">
+            <option value="Efectivo">Efectivo</option>
+            <option value="Transferencia">Transferencia</option>
+            <option value="Tarjeta Débito">Tarjeta Débito</option>
+            <option value="Tarjeta Crédito">Tarjeta Crédito</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="pago-rapido" id="abonoSugerencias" style="margin-top:10px;"></div>
+
+      <div class="field" style="margin-top:12px;">
+        <label>Nota (opcional)</label>
+        <input type="text" id="abonoNota" placeholder="Ej: segundo abono, saldo contra entrega">
+      </div>
+
+      <p class="modal-hint" id="abonoNuevoSaldo">Nuevo saldo: $0</p>
+
+      <div class="modal-foot">
+        <button class="btn btn-ghost" id="btnCancelarAbono">Cancelar</button>
+        <button class="btn btn-green" id="btnConfirmarAbono">✅ Registrar Abono</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: DETALLE DE ENCARGO -->
+  <div id="modalDetalleEncargo" class="modal-overlay">
+    <div class="modal-box" style="max-width: 560px;">
+      <h2>Detalle del Encargo</h2>
+      <div id="detalleEncargoContent" style="margin: 18px 0;"></div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" id="btnCerrarDetalleEncargo">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- MODAL: NUEVO / EDITAR REPUESTO INTERNO -->
+  <div id="modalRepuesto" class="modal-overlay">
+    <div class="modal-box modal-lg">
+      <h2 id="repuestoFormTitle">Nuevo Repuesto de Taller</h2>
+      <p class="modal-hint">Se organiza por área, categoría base y modelo exacto. Los modelos ya usados se sugieren al escribir.</p>
+      <input type="hidden" id="repuestoEditId">
+
+      <div class="grid grid-3" style="margin-top:18px;">
+        <div class="field" style="position:relative;">
+          <label>Área / Tipo *</label>
+          <input type="text" id="repuestoArea" list="listaAreasRepuesto" placeholder="Teléfonos, Laptops, Consolas, Componentes SMD">
+          <datalist id="listaAreasRepuesto"></datalist>
+        </div>
+        <div class="field">
+          <label>Categoría Base *</label>
+          <input type="text" id="repuestoCategoria" list="listaCategoriasRepuesto" placeholder="Batería, Pantalla, FPC, Sub-Board, BIOS">
+          <datalist id="listaCategoriasRepuesto"></datalist>
+        </div>
+        <div class="field">
+          <label>Modelo Exacto / Ficha *</label>
+          <input type="text" id="repuestoModelo" list="listaModelosRepuesto" placeholder="25Q128JVPQ, BN53...">
+          <datalist id="listaModelosRepuesto"></datalist>
+        </div>
+      </div>
+
+      <div class="field" style="margin-top:12px;">
+        <label>Descripción / Ficha técnica (opcional)</label>
+        <input type="text" id="repuestoDescripcion" placeholder="Compatibilidades, voltaje, encapsulado, etc.">
+      </div>
+
+      <div class="grid grid-3" style="margin-top:12px;">
+        <div class="field">
+          <label>Costo Unitario ($) *</label>
+          <input type="number" id="repuestoCosto" min="0" step="1" placeholder="0">
+        </div>
+        <div class="field">
+          <label>Precio Venta + Mano de Obra ($) *</label>
+          <input type="number" id="repuestoPrecio" min="0" step="1" placeholder="0">
+        </div>
+        <div class="field">
+          <label>Stock Disponible *</label>
+          <input type="number" id="repuestoStock" min="0" step="1" placeholder="0">
+        </div>
+      </div>
+
+      <div class="grid grid-3" style="margin-top:12px;">
+        <div class="field">
+          <label>Alerta de bajo stock cuando queden</label>
+          <input type="number" id="repuestoStockMinimo" min="0" step="1" placeholder="2">
+        </div>
+        <div class="field">
+          <label>Ubicación física (opcional)</label>
+          <input type="text" id="repuestoUbicacion" placeholder="Cajón A3, gaveta 12...">
+        </div>
+        <div class="field">
+          <label class="field-ghost-label">Alerta</label>
+          <label class="sn-toggle">
+            <input type="checkbox" id="repuestoSinAlerta"> Desactivar alerta de stock
+          </label>
+        </div>
+      </div>
+
+      <p class="modal-hint" id="repuestoMargen">Margen estimado: —</p>
+
+      <div class="modal-foot">
+        <button class="btn btn-ghost" id="btnCancelarRepuesto">Cancelar</button>
+        <button class="btn btn-primary" id="btnGuardarRepuesto">Guardar Repuesto</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: REPUESTOS Y MANO DE OBRA DE UNA OT -->
+  <div id="modalOtRepuestos" class="modal-overlay">
+    <div class="modal-box modal-lg">
+      <h2>🔩 Repuestos y Mano de Obra</h2>
+      <p class="modal-hint" id="otRepuestosResumen">—</p>
+      <input type="hidden" id="otRepuestosId">
+
+      <div class="grid grid-2" style="margin-top:18px;">
+        <div class="field" style="position:relative;">
+          <label>Buscar repuesto de taller o producto del catálogo</label>
+          <input type="text" id="otRepuestoBuscar" placeholder="Modelo, categoría o nombre..." autocomplete="off">
+          <div id="otRepuestoSugerencias" class="suggestions-box"></div>
+        </div>
+        <div class="field">
+          <label>O escribe un servicio / mano de obra</label>
+          <input type="text" id="otRepuestoNombre" placeholder="Ej: Mano de obra cambio de pantalla">
+        </div>
+      </div>
+
+      <div class="grid grid-3" style="margin-top:12px;">
+        <div class="field">
+          <label>Cantidad</label>
+          <input type="number" id="otRepuestoCantidad" min="1" step="1" value="1">
+        </div>
+        <div class="field admin-only">
+          <label>Costo Unitario ($)</label>
+          <input type="number" id="otRepuestoCosto" min="0" step="1" placeholder="0">
+        </div>
+        <div class="field">
+          <label>Precio a cobrar ($) *</label>
+          <input type="number" id="otRepuestoPrecio" min="0" step="1" placeholder="0">
+        </div>
+      </div>
+
+      <div class="row-actions" style="justify-content:flex-end;">
+        <button class="btn btn-primary" id="btnAgregarOtRepuesto">➕ Agregar a la OT</button>
+      </div>
+
+      <span class="section-label" style="margin-top:18px;">Asignado a esta orden</span>
+      <div id="otRepuestosLista" class="edit-items-container"></div>
+      <div id="otRepuestosTotales" class="edit-items-totales"></div>
+
+      <div class="modal-foot">
+        <button class="btn btn-ghost" id="btnCerrarOtRepuestos">Cerrar</button>
+        <button class="btn btn-green" id="btnCobrarOtDesdeModal">💵 Cobrar en POS</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: NOTAS INTERNAS DEL TÉCNICO -->
+  <div id="modalOtNotas" class="modal-overlay">
+    <div class="modal-box" style="max-width: 560px;">
+      <h2>🔒 Notas del Taller</h2>
+      <p class="modal-hint" id="otNotasResumen">—</p>
+      <input type="hidden" id="otNotasId">
+
+      <div class="field" style="margin-top:16px;">
+        <label>Observaciones del técnico <span class="opcional">(sí aparecen en el comprobante)</span></label>
+        <textarea id="otNotasTecnico" rows="3" placeholder="Estado visual, revisión inicial, diagnóstico informado al cliente"></textarea>
+      </div>
+
+      <div class="field" style="margin-top:12px;">
+        <label>🔒 Observaciones internas <span class="obligatorio">privadas</span></label>
+        <textarea id="otNotasInternas" rows="4" placeholder="Ej: se aplicó reflow, software X usado, cuidado con el conector flex en el próximo mantenimiento"></textarea>
+      </div>
+
+      <p class="modal-hint">Las notas internas nunca se imprimen ni se muestran en el comprobante del cliente.</p>
+
+      <div class="modal-foot">
+        <button class="btn btn-ghost" id="btnCancelarOtNotas">Cancelar</button>
+        <button class="btn btn-primary" id="btnGuardarOtNotas">Guardar Notas</button>
+      </div>
     </div>
   </div>
 
   <!-- Áreas de impresión -->
   <div id="ticketContainer"></div>
   <div id="otPrintArea"></div>
+  <div id="etiquetaPrintArea"></div>
+  <div id="fichaPrintArea"></div>
 
   <div id="toast" class="toast"></div>
 
@@ -1024,6 +1534,10 @@
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
+  <!-- Escáner por cámara y generador de códigos de barras para etiquetas -->
+  <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
 
   <!-- Orden importante: api.js y config.js primero -->
   <script src="js/api.js"></script>
@@ -1032,7 +1546,11 @@
   <script src="js/pago.js"></script>
   <script src="js/productos.js"></script>
   <script src="js/historial.js"></script>
+  <script src="js/escaner.js"></script>
+  <script src="js/etiquetas.js"></script>
   <script src="js/compras.js"></script>
+  <script src="js/encargos.js"></script>
+  <script src="js/repuestos.js"></script>
   <script src="js/ot.js"></script>
   <script src="js/pos.js"></script>
   <script src="js/print.js"></script>

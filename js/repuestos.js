@@ -1,0 +1,357 @@
+// ==========================================
+// REPUESTOS.JS - Repuestos Internos de Taller
+// ------------------------------------------
+// Inventario propio del taller, separado del catálogo comercial.
+// Se organiza por Área/Tipo → Categoría Base → Modelo Exacto, y los
+// valores ya usados quedan disponibles como autocompletado.
+// ==========================================
+
+let repuestosList = [];
+let editandoRepuestoId = null;
+
+const AREAS_SUGERIDAS = ['Teléfonos', 'Laptops', 'Consolas', 'Componentes SMD', 'Impresoras', 'Tablets'];
+const CATEGORIAS_SUGERIDAS = ['Batería', 'Pantalla', 'FPC', 'Sub-Board', 'BIOS', 'Capacitores', 'Conector de carga', 'Teclado', 'Bisagras', 'Mano de obra'];
+const STOCK_MINIMO_REPUESTO = 2;
+
+const ICO_EDITAR_REP = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>`;
+const ICO_ELIMINAR_REP = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></svg>`;
+
+const elRepuestosTableBody = document.getElementById('repuestosTableBody');
+const elRepuestosBuscar = document.getElementById('repuestosBuscar');
+const elRepuestosFiltroArea = document.getElementById('repuestosFiltroArea');
+const elRepuestosFiltroCategoria = document.getElementById('repuestosFiltroCategoria');
+const elBtnRecargarRepuestos = document.getElementById('btnRecargarRepuestos');
+const elRepuestosResumenLabel = document.getElementById('repuestosResumenLabel');
+const elPanelBajoStockRepuestos = document.getElementById('panelBajoStockRepuestos');
+const elListaBajoStockRepuestos = document.getElementById('listaBajoStockRepuestos');
+const elBadgeBajoStockRepuestos = document.getElementById('badgeBajoStockRepuestos');
+const elBtnValorizacionRepuestos = document.getElementById('btnValorizacionRepuestos');
+
+const elModalRepuesto = document.getElementById('modalRepuesto');
+const elRepuestoFormTitle = document.getElementById('repuestoFormTitle');
+const elRepuestoEditId = document.getElementById('repuestoEditId');
+const elRepuestoArea = document.getElementById('repuestoArea');
+const elRepuestoCategoria = document.getElementById('repuestoCategoria');
+const elRepuestoModelo = document.getElementById('repuestoModelo');
+const elRepuestoDescripcion = document.getElementById('repuestoDescripcion');
+const elRepuestoCosto = document.getElementById('repuestoCosto');
+const elRepuestoPrecio = document.getElementById('repuestoPrecio');
+const elRepuestoStock = document.getElementById('repuestoStock');
+const elRepuestoStockMinimo = document.getElementById('repuestoStockMinimo');
+const elRepuestoUbicacion = document.getElementById('repuestoUbicacion');
+const elRepuestoSinAlerta = document.getElementById('repuestoSinAlerta');
+const elRepuestoMargen = document.getElementById('repuestoMargen');
+const elBtnNuevoRepuesto = document.getElementById('btnNuevoRepuesto');
+const elBtnCancelarRepuesto = document.getElementById('btnCancelarRepuesto');
+const elBtnGuardarRepuesto = document.getElementById('btnGuardarRepuesto');
+
+const elListaAreas = document.getElementById('listaAreasRepuesto');
+const elListaCategorias = document.getElementById('listaCategoriasRepuesto');
+const elListaModelos = document.getElementById('listaModelosRepuesto');
+
+document.addEventListener('DOMContentLoaded', () => {
+  if (elBtnNuevoRepuesto) elBtnNuevoRepuesto.addEventListener('click', () => abrirModalRepuesto());
+  if (elBtnCancelarRepuesto) elBtnCancelarRepuesto.addEventListener('click', cerrarModalRepuesto);
+  if (elBtnGuardarRepuesto) elBtnGuardarRepuesto.addEventListener('click', guardarRepuesto);
+  if (elBtnRecargarRepuestos) elBtnRecargarRepuestos.addEventListener('click', cargarRepuestos);
+  if (elBtnValorizacionRepuestos) elBtnValorizacionRepuestos.addEventListener('click', mostrarValorizacionRepuestos);
+
+  if (elRepuestosBuscar) elRepuestosBuscar.addEventListener('input', () => renderRepuestosTabla(repuestosList));
+  [elRepuestosFiltroArea, elRepuestosFiltroCategoria].forEach(el => {
+    if (el) el.addEventListener('change', () => renderRepuestosTabla(repuestosList));
+  });
+
+  [elRepuestoCosto, elRepuestoPrecio].forEach(el => {
+    if (el) el.addEventListener('input', actualizarMargenRepuesto);
+  });
+
+  if (elModalRepuesto) {
+    elModalRepuesto.addEventListener('click', (e) => { if (e.target === elModalRepuesto) cerrarModalRepuesto(); });
+  }
+});
+
+// ============================================================
+// CARGA Y RENDER
+// ============================================================
+async function cargarRepuestos() {
+  if (!tokenActual()) return;
+
+  try {
+    repuestosList = await API.repuestos.listar();
+    poblarFiltrosRepuestos();
+    renderRepuestosTabla(repuestosList);
+    renderPanelBajoStockRepuestos();
+  } catch (err) {
+    console.error('Error al cargar repuestos:', err.message || err);
+    showToast(err.message || 'No se pudieron cargar los repuestos', 'err');
+  }
+}
+
+/* Los valores ya usados alimentan filtros y autocompletado */
+function valoresUnicos(campo, sugeridos = []) {
+  const usados = repuestosList.map(r => (r[campo] || '').trim()).filter(Boolean);
+  return [...new Set([...usados, ...sugeridos])].sort((a, b) => a.localeCompare(b));
+}
+
+function poblarFiltrosRepuestos() {
+  const areas = valoresUnicos('area', AREAS_SUGERIDAS);
+  const categorias = valoresUnicos('categoria', CATEGORIAS_SUGERIDAS);
+  const modelos = valoresUnicos('modelo');
+
+  const pintarSelect = (select, valores, etiqueta) => {
+    if (!select) return;
+    const actual = select.value;
+    select.innerHTML = `<option value="">${etiqueta}</option>` +
+      valores.map(v => `<option value="${v}">${v}</option>`).join('');
+    select.value = actual;
+  };
+
+  pintarSelect(elRepuestosFiltroArea, areas, 'Todas las áreas');
+  pintarSelect(elRepuestosFiltroCategoria, categorias, 'Todas las categorías');
+
+  const pintarDatalist = (lista, valores) => {
+    if (!lista) return;
+    lista.innerHTML = valores.map(v => `<option value="${v}"></option>`).join('');
+  };
+
+  pintarDatalist(elListaAreas, areas);
+  pintarDatalist(elListaCategorias, categorias);
+  pintarDatalist(elListaModelos, modelos);
+}
+
+function limiteStockRepuesto(r) {
+  const limite = Number(r.stock_minimo);
+  return Number.isFinite(limite) && limite > 0 ? limite : STOCK_MINIMO_REPUESTO;
+}
+
+function enAlertaRepuesto(r) {
+  if (r.alerta_stock === false) return false;
+  return Number(r.stock || 0) <= limiteStockRepuesto(r);
+}
+
+function badgeStockRepuesto(r) {
+  const stock = Number(r.stock) || 0;
+  if (r.alerta_stock === false) return `<span class="stock-badge stock-ok">${stock}</span>`;
+  if (stock <= 0) return `<span class="stock-badge stock-agotado">Agotado</span>`;
+  if (stock <= limiteStockRepuesto(r)) return `<span class="stock-badge stock-bajo">⚠️ ${stock}</span>`;
+  return `<span class="stock-badge stock-ok">${stock}</span>`;
+}
+
+function repuestosFiltrados() {
+  const texto = (elRepuestosBuscar?.value || '').trim().toLowerCase();
+  const area = elRepuestosFiltroArea?.value || '';
+  const categoria = elRepuestosFiltroCategoria?.value || '';
+
+  return repuestosList.filter(r => {
+    if (area && r.area !== area) return false;
+    if (categoria && r.categoria !== categoria) return false;
+    if (!texto) return true;
+    return [r.modelo, r.categoria, r.area, r.descripcion, r.ubicacion]
+      .some(v => (v || '').toLowerCase().includes(texto));
+  });
+}
+
+function renderRepuestosTabla(lista) {
+  if (!elRepuestosTableBody) return;
+
+  const filas = repuestosFiltrados();
+  const total = filas.reduce((a, r) => a + (Number(r.stock) || 0) * (Number(r.precio_venta) || 0), 0);
+
+  if (elRepuestosResumenLabel) {
+    elRepuestosResumenLabel.textContent =
+      `${filas.length} repuesto(s) en pantalla · ${fmtCLP(total)} en venta potencial`;
+  }
+
+  if (filas.length === 0) {
+    elRepuestosTableBody.innerHTML = '<tr class="empty-row"><td colspan="8">No hay repuestos con este filtro. Crea uno con “Nuevo Repuesto”.</td></tr>';
+    return;
+  }
+
+  elRepuestosTableBody.innerHTML = filas.map(r => `
+    <tr class="row-in">
+      <td><span class="badge badge-blue">${r.area}</span></td>
+      <td>${r.categoria}</td>
+      <td>
+        <span class="strong">${r.modelo}</span>
+        ${r.descripcion ? `<br><small style="color:var(--text-muted);">${r.descripcion}</small>` : ''}
+      </td>
+      <td class="admin-only num">${fmtCLP(r.costo_unitario)}</td>
+      <td class="num strong">${fmtCLP(r.precio_venta)}</td>
+      <td>${badgeStockRepuesto(r)}</td>
+      <td class="stock-fecha">${r.ubicacion || '—'}</td>
+      <td>
+        <div class="cell-actions">
+          <button class="btn btn-icon btn-icon-edit admin-only" data-editar="${r.id}" title="Editar repuesto">${ICO_EDITAR_REP}</button>
+          <button class="btn btn-icon btn-icon-del admin-only" data-eliminar="${r.id}" title="Eliminar repuesto">${ICO_ELIMINAR_REP}</button>
+        </div>
+      </td>
+    </tr>
+  `).join('');
+
+  elRepuestosTableBody.querySelectorAll('button[data-editar]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const repuesto = repuestosList.find(r => String(r.id) === btn.dataset.editar);
+      if (repuesto) abrirModalRepuesto(repuesto);
+    });
+  });
+  elRepuestosTableBody.querySelectorAll('button[data-eliminar]').forEach(btn => {
+    btn.addEventListener('click', () => eliminarRepuesto(btn.dataset.eliminar));
+  });
+}
+
+function renderPanelBajoStockRepuestos() {
+  if (!elPanelBajoStockRepuestos) return;
+
+  const enAlerta = repuestosList.filter(enAlertaRepuesto)
+    .sort((a, b) => (Number(a.stock) || 0) - (Number(b.stock) || 0));
+
+  if (enAlerta.length === 0) { elPanelBajoStockRepuestos.style.display = 'none'; return; }
+
+  elPanelBajoStockRepuestos.style.display = 'block';
+  if (elBadgeBajoStockRepuestos) elBadgeBajoStockRepuestos.textContent = String(enAlerta.length);
+  if (elListaBajoStockRepuestos) {
+    elListaBajoStockRepuestos.innerHTML = enAlerta.slice(0, 12).map(r => `
+      <div class="alerta-stock-item" data-abrir="${r.id}" title="${r.area} · ${r.categoria}">
+        <span>${r.modelo}</span>
+        <b>${Number(r.stock) || 0}</b>
+        <span style="color:var(--text-muted);">/ mín. ${limiteStockRepuesto(r)}</span>
+      </div>
+    `).join('');
+
+    elListaBajoStockRepuestos.querySelectorAll('[data-abrir]').forEach(item => {
+      item.addEventListener('click', () => {
+        const repuesto = repuestosList.find(r => String(r.id) === item.dataset.abrir);
+        if (repuesto) abrirModalRepuesto(repuesto);
+      });
+    });
+  }
+}
+
+function mostrarValorizacionRepuestos() {
+  const costo = repuestosList.reduce((a, r) => a + (Number(r.stock) || 0) * (Number(r.costo_unitario) || 0), 0);
+  const venta = repuestosList.reduce((a, r) => a + (Number(r.stock) || 0) * (Number(r.precio_venta) || 0), 0);
+  const unidades = repuestosList.reduce((a, r) => a + (Number(r.stock) || 0), 0);
+
+  alert(
+    'Valorización del inventario de taller\n\n' +
+    `Repuestos distintos: ${repuestosList.length}\n` +
+    `Unidades en stock: ${unidades}\n\n` +
+    `Costo total: ${fmtCLP(costo)}\n` +
+    `Venta estimada (con mano de obra): ${fmtCLP(venta)}\n` +
+    `Ganancia proyectada: ${fmtCLP(venta - costo)}` +
+    (venta > 0 ? ` (${(((venta - costo) / venta) * 100).toFixed(1)}% de margen)` : '')
+  );
+}
+
+// ============================================================
+// MODAL CREAR / EDITAR
+// ============================================================
+function abrirModalRepuesto(repuesto = null) {
+  if (!elModalRepuesto) return;
+  if (!esAdmin()) { showToast('Solo el administrador gestiona el inventario de taller', 'err'); return; }
+
+  poblarFiltrosRepuestos();
+
+  if (repuesto) {
+    editandoRepuestoId = repuesto.id;
+    if (elRepuestoFormTitle) elRepuestoFormTitle.textContent = `Editar ${repuesto.modelo}`;
+    if (elRepuestoEditId) elRepuestoEditId.value = repuesto.id;
+    if (elRepuestoArea) elRepuestoArea.value = repuesto.area || '';
+    if (elRepuestoCategoria) elRepuestoCategoria.value = repuesto.categoria || '';
+    if (elRepuestoModelo) elRepuestoModelo.value = repuesto.modelo || '';
+    if (elRepuestoDescripcion) elRepuestoDescripcion.value = repuesto.descripcion || '';
+    if (elRepuestoCosto) elRepuestoCosto.value = repuesto.costo_unitario || 0;
+    if (elRepuestoPrecio) elRepuestoPrecio.value = repuesto.precio_venta || 0;
+    if (elRepuestoStock) elRepuestoStock.value = repuesto.stock || 0;
+    if (elRepuestoStockMinimo) elRepuestoStockMinimo.value = repuesto.stock_minimo ?? STOCK_MINIMO_REPUESTO;
+    if (elRepuestoUbicacion) elRepuestoUbicacion.value = repuesto.ubicacion || '';
+    if (elRepuestoSinAlerta) elRepuestoSinAlerta.checked = repuesto.alerta_stock === false;
+  } else {
+    editandoRepuestoId = null;
+    if (elRepuestoFormTitle) elRepuestoFormTitle.textContent = 'Nuevo Repuesto de Taller';
+    if (elRepuestoEditId) elRepuestoEditId.value = '';
+    [elRepuestoArea, elRepuestoCategoria, elRepuestoModelo, elRepuestoDescripcion, elRepuestoUbicacion]
+      .forEach(el => { if (el) el.value = ''; });
+    [elRepuestoCosto, elRepuestoPrecio, elRepuestoStock].forEach(el => { if (el) el.value = ''; });
+    if (elRepuestoStockMinimo) elRepuestoStockMinimo.value = STOCK_MINIMO_REPUESTO;
+    if (elRepuestoSinAlerta) elRepuestoSinAlerta.checked = false;
+  }
+
+  actualizarMargenRepuesto();
+  elModalRepuesto.classList.add('show');
+  setTimeout(() => elRepuestoArea?.focus(), 80);
+}
+
+function cerrarModalRepuesto() {
+  if (elModalRepuesto) elModalRepuesto.classList.remove('show');
+  editandoRepuestoId = null;
+}
+
+function actualizarMargenRepuesto() {
+  if (!elRepuestoMargen) return;
+  const costo = Number(elRepuestoCosto?.value) || 0;
+  const precio = Number(elRepuestoPrecio?.value) || 0;
+
+  if (precio <= 0) { elRepuestoMargen.textContent = 'Margen estimado: —'; return; }
+  const ganancia = precio - costo;
+  elRepuestoMargen.textContent =
+    `Margen estimado: ${fmtCLP(ganancia)} por unidad (${((ganancia / precio) * 100).toFixed(1)}%)`;
+}
+
+async function guardarRepuesto() {
+  const payload = {
+    area: elRepuestoArea?.value.trim(),
+    categoria: elRepuestoCategoria?.value.trim(),
+    modelo: elRepuestoModelo?.value.trim(),
+    descripcion: elRepuestoDescripcion?.value.trim() || null,
+    costo_unitario: Number(elRepuestoCosto?.value) || 0,
+    precio_venta: Number(elRepuestoPrecio?.value) || 0,
+    stock: Number(elRepuestoStock?.value) || 0,
+    stock_minimo: Number(elRepuestoStockMinimo?.value) || 0,
+    ubicacion: elRepuestoUbicacion?.value.trim() || null,
+    alerta_stock: !(elRepuestoSinAlerta && elRepuestoSinAlerta.checked)
+  };
+
+  if (!payload.area) { showToast('Indica el área o tipo', 'err'); elRepuestoArea?.focus(); return; }
+  if (!payload.categoria) { showToast('Indica la categoría base', 'err'); elRepuestoCategoria?.focus(); return; }
+  if (!payload.modelo) { showToast('Indica el modelo exacto', 'err'); elRepuestoModelo?.focus(); return; }
+  if (payload.precio_venta <= 0) { showToast('El precio de venta debe ser mayor a 0', 'err'); elRepuestoPrecio?.focus(); return; }
+
+  if (elBtnGuardarRepuesto) elBtnGuardarRepuesto.disabled = true;
+
+  try {
+    if (editandoRepuestoId) await API.repuestos.actualizar(editandoRepuestoId, payload);
+    else await API.repuestos.crear(payload);
+
+    showToast(editandoRepuestoId ? 'Repuesto actualizado' : 'Repuesto agregado al taller', 'ok');
+    cerrarModalRepuesto();
+    cargarRepuestos();
+  } catch (err) {
+    console.error('Error al guardar el repuesto:', err.message || err);
+    showToast(err.message || 'No se pudo guardar el repuesto', 'err');
+  } finally {
+    if (elBtnGuardarRepuesto) elBtnGuardarRepuesto.disabled = false;
+  }
+}
+
+async function eliminarRepuesto(id) {
+  if (!confirm('¿Eliminar este repuesto del inventario de taller?')) return;
+  try {
+    await API.repuestos.eliminar(id);
+    showToast('Repuesto eliminado', 'ok');
+    cargarRepuestos();
+  } catch (err) {
+    showToast(err.message || 'No se pudo eliminar el repuesto', 'err');
+  }
+}
+
+/* Búsqueda usada por el modal de repuestos de una OT */
+function buscarRepuestosPorTexto(texto, limite = 8) {
+  const t = String(texto || '').trim().toLowerCase();
+  if (!t) return [];
+  return repuestosList.filter(r =>
+    [r.modelo, r.categoria, r.area, r.descripcion].some(v => (v || '').toLowerCase().includes(t))
+  ).slice(0, limite);
+}
+
+document.addEventListener('pos:sesion-iniciada', () => cargarRepuestos());

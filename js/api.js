@@ -87,7 +87,9 @@ const API = {
     actualizar: (id, cambios) => apiRequest(`/ventas/${id}`, { method: 'PUT', body: cambios }),
     eliminar: (id) => apiRequest(`/ventas/${id}`, { method: 'DELETE' }),
     eliminarPeriodo: (desde, hasta) => apiRequest(`/ventas?desde=${desde}&hasta=${hasta}`, { method: 'DELETE' }),
-    eliminarTodo: () => apiRequest('/ventas?todo=true', { method: 'DELETE' })
+    eliminarTodo: () => apiRequest('/ventas?todo=true', { method: 'DELETE' }),
+    // Devuelve el stock de los productos antes de borrar
+    eliminarLote: (ids) => apiRequest('/ventas/eliminar-lote', { method: 'POST', body: { ids } })
   },
 
   compras: {
@@ -100,7 +102,29 @@ const API = {
     crear: (c) => apiRequest('/compras', { method: 'POST', body: c }),
     actualizar: (id, c) => apiRequest(`/compras/${id}`, { method: 'PUT', body: c }),
     eliminar: (id) => apiRequest(`/compras/${id}`, { method: 'DELETE' }),
+    eliminarLote: (ids) => apiRequest('/compras/eliminar-lote', { method: 'POST', body: { ids } }),
     subirArchivo: (nombre, tipo, base64) => apiRequest('/compras/archivo', { method: 'POST', body: { nombre, tipo, base64 } })
+  },
+
+  repuestos: {
+    listar: (filtros = {}) => {
+      const q = new URLSearchParams();
+      Object.entries(filtros).forEach(([k, v]) => { if (v) q.set(k, v); });
+      const cadena = q.toString();
+      return apiRequest('/repuestos' + (cadena ? `?${cadena}` : ''));
+    },
+    crear: (r) => apiRequest('/repuestos', { method: 'POST', body: r }),
+    actualizar: (id, r) => apiRequest(`/repuestos/${id}`, { method: 'PUT', body: r }),
+    eliminar: (id) => apiRequest(`/repuestos/${id}`, { method: 'DELETE' })
+  },
+
+  encargos: {
+    listar: (estado) => apiRequest('/encargos' + (estado ? `?estado=${encodeURIComponent(estado)}` : '')),
+    detalle: (id) => apiRequest(`/encargos/${id}`),
+    crear: (e) => apiRequest('/encargos', { method: 'POST', body: e }),
+    actualizar: (id, e) => apiRequest(`/encargos/${id}`, { method: 'PUT', body: e }),
+    abonar: (id, datos) => apiRequest(`/encargos/${id}/abono`, { method: 'POST', body: datos }),
+    eliminar: (id) => apiRequest(`/encargos/${id}`, { method: 'DELETE' })
   },
 
   ot: {
@@ -115,6 +139,10 @@ const API = {
     crear: (ot) => apiRequest('/ot', { method: 'POST', body: ot }),
     actualizar: (id, ot) => apiRequest(`/ot/${id}`, { method: 'PUT', body: ot }),
     entregar: (id, datos) => apiRequest(`/ot/${id}/entrega`, { method: 'POST', body: datos }),
+    // Repuestos y mano de obra asignados a la orden
+    listarRepuestos: (id) => apiRequest(`/ot/${id}/repuestos`),
+    agregarRepuesto: (id, item) => apiRequest(`/ot/${id}/repuestos`, { method: 'POST', body: item }),
+    quitarRepuesto: (otId, id) => apiRequest(`/ot/${otId}/repuestos/${id}`, { method: 'DELETE' }),
     eliminar: (id) => apiRequest(`/ot/${id}`, { method: 'DELETE' })
   }
 };

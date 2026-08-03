@@ -157,7 +157,7 @@ app.get('/api/health', (_req, res) => res.json({ ok: true, servicio: 'sevelin-po
 const CAMPOS_PRODUCTO = [
   'sku', 'codigo_barras', 'nombre', 'costo_unitario', 'precio_unitario', 'stock',
   'requiere_sn', 'peso_kg', 'alto_cm', 'ancho_cm', 'profundidad_cm', 'descripcion',
-  'stock_minimo', 'alerta_stock'
+  'stock_minimo', 'alerta_stock', 'es_repuesto'
 ];
 
 function sanearProducto(body = {}) {
@@ -170,6 +170,7 @@ function sanearProducto(body = {}) {
     .forEach(k => { if (p[k] !== undefined) p[k] = num(p[k]); });
   p.requiere_sn = !!p.requiere_sn;
   if (body.alerta_stock !== undefined) p.alerta_stock = !!body.alerta_stock;
+  if (body.es_repuesto !== undefined) p.es_repuesto = !!body.es_repuesto;
 
   // Cada vez que se toca el stock queda registrada la fecha del cambio
   if (p.stock !== undefined) p.stock_actualizado_en = new Date().toISOString();
@@ -244,15 +245,25 @@ async function normalizarItems(items, rolSolicitante) {
     (data || []).forEach(p => { costosCatalogo[p.id] = num(p.costo_unitario); });
   }
 
+  const idsRepuesto = [...new Set(lista.map(i => i.repuesto_id).filter(Boolean))];
+  const costosRepuesto = {};
+  if (idsRepuesto.length) {
+    const { data } = await db.from('repuestos').select('id, costo_unitario').in('id', idsRepuesto);
+    (data || []).forEach(r => { costosRepuesto[r.id] = num(r.costo_unitario); });
+  }
+
   return lista.map(it => {
     const cantidad = Math.max(1, Math.round(num(it.cantidad) || 1));
     const precio = num(it.precio_unitario);
     const costoCliente = num(it.costo_unitario);
-    const costoCatalogo = it.producto_id ? (costosCatalogo[it.producto_id] || 0) : 0;
+    const costoCatalogo = it.producto_id
+      ? (costosCatalogo[it.producto_id] || 0)
+      : (it.repuesto_id ? (costosRepuesto[it.repuesto_id] || 0) : 0);
     const costo = rolSolicitante === 'admin' ? costoCliente : (costoCatalogo || costoCliente);
 
     return {
       producto_id: it.producto_id || null,
+      repuesto_id: it.repuesto_id || null,
       sku: it.sku || null,
       nombre: String(it.nombre || 'Producto').trim(),
       cantidad,
@@ -286,6 +297,20 @@ async function ajustarStock(items, signo = -1) {
       const { data } = await db.from('productos').select('id, stock').eq('codigo_barras', String(item.codigo_barras).trim()).limit(1);
       producto = (data && data[0]) || null;
     }
+
+    // Repuestos internos del taller: viven en su propia tabla
+    if (!producto && item.repuesto_id) {
+      const { data } = await db.from('repuestos').select('id, stock').eq('id', item.repuesto_id).maybeSingle();
+      if (data) {
+        const nuevo = num(data.stock) + signo * num(item.cantidad);
+        await db.from('repuestos')
+          .update({ stock: nuevo, stock_actualizado_en: new Date().toISOString() })
+          .eq('id', data.id);
+        ajustados.push({ repuesto_id: data.id, stock: nuevo });
+      }
+      continue;
+    }
+
     if (!producto) continue; // producto libre (no está en el catálogo)
 
     const nuevoStock = num(producto.stock) + signo * num(item.cantidad);
@@ -348,6 +373,9 @@ app.post('/api/ventas', auth(), async (req, res) => {
       estado: esPendiente ? 'PENDIENTE' : 'PAGADA',
       fecha_pago: esPendiente ? null : new Date().toISOString(),
       metodo_pago_final: esPendiente ? null : metodoPago,
+      // Vínculo opcional con la orden de trabajo que se está cobrando
+      ot_id: req.body?.ot_id || null,
+      numero_ot: (req.body?.numero_ot || '').trim() || null,
       ...totales,
       impreso: false
     };
@@ -364,8 +392,12 @@ app.post('/api/ventas', auth(), async (req, res) => {
       throw new Error(errItems.message);
     }
 
-    // El stock se descuenta después de confirmar el detalle
+    // El stock (comercial e interno) se descuenta recién aquí, al cerrar la venta
     await ajustarStock(items, -1);
+
+    if (cabecera.ot_id) {
+      await db.from('ot_repuestos').update({ cobrado: true }).eq('ot_id', cabecera.ot_id);
+    }
 
     res.status(201).json({ ...venta, items });
   } catch (err) {
@@ -503,6 +535,36 @@ app.put('/api/ventas/:id', auth(true), async (req, res) => {
   }
 });
 
+/* Eliminación masiva de ventas.
+   Antes de borrar se devuelve al catálogo el stock de cada ítem que tenga
+   producto asociado (por id, SKU o código de barras), de modo que el
+   inventario quede como estaba antes de esas ventas. */
+app.post('/api/ventas/eliminar-lote', auth(true), async (req, res) => {
+  const ids = (Array.isArray(req.body?.ids) ? req.body.ids : []).map(Number).filter(Boolean);
+  if (ids.length === 0) return enviarError(res, 400, 'No hay ventas seleccionadas');
+  if (ids.length > 300) return enviarError(res, 413, 'Elimina como máximo 300 ventas por vez');
+
+  const resultado = { eliminadas: 0, stock_repuesto: 0, errores: [] };
+
+  try {
+    const { data: items, error: errItems } = await db
+      .from('venta_items').select('*').in('venta_id', ids);
+    if (errItems) throw new Error(errItems.message);
+
+    // El stock se repone antes del borrado: si el DELETE falla, no se perdió nada
+    const repuestos = await ajustarStock(items || [], +1);
+    resultado.stock_repuesto = repuestos.length;
+
+    const { error } = await db.from('ventas').delete().in('id', ids);
+    if (error) throw new Error(error.message);
+
+    resultado.eliminadas = ids.length;
+    res.json(resultado);
+  } catch (err) {
+    enviarError(res, 500, err.message || 'No se pudieron eliminar las ventas');
+  }
+});
+
 // Eliminar por período o todo el historial (solo admin)
 app.delete('/api/ventas', auth(true), async (req, res) => {
   const { desde, hasta, todo } = req.query;
@@ -614,6 +676,15 @@ app.put('/api/compras/:id', auth(true), async (req, res) => {
   res.json(data);
 });
 
+app.post('/api/compras/eliminar-lote', auth(true), async (req, res) => {
+  const ids = (Array.isArray(req.body?.ids) ? req.body.ids : []).map(Number).filter(Boolean);
+  if (ids.length === 0) return enviarError(res, 400, 'No hay compras seleccionadas');
+
+  const { error } = await db.from('compras').delete().in('id', ids);
+  if (error) return enviarError(res, 500, error.message);
+  res.json({ eliminadas: ids.length });
+});
+
 app.delete('/api/compras/:id', auth(true), async (req, res) => {
   const { error } = await db.from('compras').delete().eq('id', req.params.id);
   if (error) return enviarError(res, 500, error.message);
@@ -654,7 +725,7 @@ const CAMPOS_OT = [
   'cliente_nombre', 'cliente_rut', 'cliente_telefono', 'cliente_correo', 'cliente_direccion',
   'dispositivo_categoria', 'dispositivo_modelo', 'dispositivo_sn', 'dispositivo_enciende', 'dispositivo_pin',
   'cargador_deja', 'cargador_tipo', 'cargador_voltaje', 'cargador_amperaje', 'cargador_cable',
-  'accesorios', 'falla_reportada', 'obs_cliente', 'obs_tecnico', 'acepta_responsabilidad'
+  'accesorios', 'falla_reportada', 'obs_cliente', 'obs_tecnico', 'obs_internas', 'acepta_responsabilidad'
 ];
 
 function sanearOT(body = {}) {
@@ -750,6 +821,256 @@ app.post('/api/ot/:id/entrega', auth(), async (req, res) => {
 
 app.delete('/api/ot/:id', auth(true), async (req, res) => {
   const { error } = await db.from('ordenes_trabajo').delete().eq('id', req.params.id);
+  if (error) return enviarError(res, 500, error.message);
+  res.json({ ok: true });
+});
+
+/* ============================================================
+   REPUESTOS INTERNOS DE TALLER
+   Inventario propio, fuera del catálogo comercial.
+   Ver: admin y trabajador (el técnico los usa) · Escribir: admin
+   ============================================================ */
+const CAMPOS_REPUESTO = [
+  'area', 'categoria', 'modelo', 'descripcion', 'costo_unitario',
+  'precio_venta', 'stock', 'stock_minimo', 'alerta_stock', 'ubicacion'
+];
+
+function sanearRepuesto(body = {}) {
+  const r = {};
+  CAMPOS_REPUESTO.forEach(k => { if (body[k] !== undefined) r[k] = body[k]; });
+
+  ['area', 'categoria', 'modelo'].forEach(k => { r[k] = String(r[k] || '').trim(); });
+  if (!r.area) return { error: 'Indica el área o tipo (Teléfonos, Laptops, etc.)' };
+  if (!r.categoria) return { error: 'Indica la categoría base (Batería, Pantalla, BIOS, etc.)' };
+  if (!r.modelo) return { error: 'Indica el modelo exacto del repuesto' };
+
+  ['costo_unitario', 'precio_venta', 'stock', 'stock_minimo'].forEach(k => {
+    if (r[k] !== undefined) r[k] = num(r[k]);
+  });
+  if (!(num(r.precio_venta) > 0)) return { error: 'El precio de venta (con mano de obra) debe ser mayor a 0' };
+
+  if (body.alerta_stock !== undefined) r.alerta_stock = !!body.alerta_stock;
+  ['descripcion', 'ubicacion'].forEach(k => { if (r[k] !== undefined) r[k] = String(r[k]).trim() || null; });
+
+  if (r.stock !== undefined) r.stock_actualizado_en = new Date().toISOString();
+  return { datos: r };
+}
+
+app.get('/api/repuestos', auth(), async (req, res) => {
+  const { area, categoria } = req.query;
+  let q = db.from('repuestos').select('*').order('area').order('categoria').order('modelo');
+  if (area) q = q.eq('area', area);
+  if (categoria) q = q.eq('categoria', categoria);
+
+  const { data, error } = await q;
+  if (error) return enviarError(res, 500, error.message);
+  res.json(limpiarLista(data, req.usuario.rol));
+});
+
+app.post('/api/repuestos', auth(true), async (req, res) => {
+  const { datos, error: errValidacion } = sanearRepuesto(req.body);
+  if (errValidacion) return enviarError(res, 400, errValidacion);
+
+  const { data, error } = await db.from('repuestos').insert([datos]).select().single();
+  if (error) {
+    const duplicado = /duplicate|unique/i.test(error.message);
+    return enviarError(res, duplicado ? 409 : 500,
+      duplicado ? 'Ya existe un repuesto con esa área, categoría y modelo' : error.message);
+  }
+  res.status(201).json(data);
+});
+
+app.put('/api/repuestos/:id', auth(true), async (req, res) => {
+  const { datos, error: errValidacion } = sanearRepuesto(req.body);
+  if (errValidacion) return enviarError(res, 400, errValidacion);
+
+  const { data, error } = await db.from('repuestos').update(datos).eq('id', req.params.id).select().single();
+  if (error) return enviarError(res, 500, error.message);
+  res.json(data);
+});
+
+app.delete('/api/repuestos/:id', auth(true), async (req, res) => {
+  const { error } = await db.from('repuestos').delete().eq('id', req.params.id);
+  if (error) return enviarError(res, 500, error.message);
+  res.json({ ok: true });
+});
+
+/* ---------- Repuestos y mano de obra asignados a una OT ---------- */
+app.get('/api/ot/:id/repuestos', auth(), async (req, res) => {
+  const { data, error } = await db.from('ot_repuestos').select('*').eq('ot_id', req.params.id).order('id');
+  if (error) return enviarError(res, 500, error.message);
+  res.json(limpiarLista(data, req.usuario.rol));
+});
+
+app.post('/api/ot/:id/repuestos', auth(), async (req, res) => {
+  const nombre = String(req.body?.nombre || '').trim();
+  const precio = num(req.body?.precio_unitario);
+  if (!nombre) return enviarError(res, 400, 'Indica el repuesto o servicio');
+  if (precio <= 0) return enviarError(res, 400, 'El precio debe ser mayor a 0');
+
+  const registro = {
+    ot_id: Number(req.params.id),
+    repuesto_id: req.body?.repuesto_id || null,
+    producto_id: req.body?.producto_id || null,
+    nombre,
+    cantidad: Math.max(1, Math.round(num(req.body?.cantidad) || 1)),
+    costo_unitario: num(req.body?.costo_unitario),
+    precio_unitario: precio,
+    cobrado: false
+  };
+
+  const { data, error } = await db.from('ot_repuestos').insert([registro]).select().single();
+  if (error) return enviarError(res, 500, error.message);
+  res.status(201).json(data);
+});
+
+app.delete('/api/ot/:otId/repuestos/:id', auth(), async (req, res) => {
+  const { error } = await db.from('ot_repuestos').delete().eq('id', req.params.id).eq('ot_id', req.params.otId);
+  if (error) return enviarError(res, 500, error.message);
+  res.json({ ok: true });
+});
+
+/* ============================================================
+   ABONOS Y ENCARGOS
+   Ver y registrar: admin y trabajador · Eliminar: solo admin
+   ============================================================ */
+function estadoEncargo(total, abonado) {
+  if (abonado <= 0) return 'PENDIENTE';
+  if (abonado + 0.001 < total) return 'PARCIAL';
+  return 'PAGADO';
+}
+
+function sanearEncargo(body = {}) {
+  const descripcion = String(body.descripcion || '').trim();
+  const cliente = String(body.cliente_nombre || '').trim();
+  const total = num(body.monto_total);
+
+  if (!cliente) return { error: 'El nombre del cliente es obligatorio' };
+  if (!descripcion) return { error: 'Describe el encargo o servicio' };
+  if (total <= 0) return { error: 'El monto total debe ser mayor a 0' };
+
+  return {
+    datos: {
+      ot_id: body.ot_id || null,
+      numero_ot: (body.numero_ot || '').trim() || null,
+      cliente_nombre: cliente,
+      cliente_rut: (body.cliente_rut || '').trim() || null,
+      cliente_telefono: (body.cliente_telefono || '').trim() || null,
+      descripcion,
+      monto_total: total,
+      observaciones: (body.observaciones || '').trim() || null
+    }
+  };
+}
+
+app.get('/api/encargos', auth(), async (req, res) => {
+  const { estado } = req.query;
+  let q = db.from('encargos').select('*').order('id', { ascending: false });
+  if (estado) q = q.eq('estado', estado);
+
+  const { data, error } = await q;
+  if (error) return enviarError(res, 500, error.message);
+  res.json(data || []);
+});
+
+app.get('/api/encargos/:id', auth(), async (req, res) => {
+  const { data: encargo, error } = await db.from('encargos').select('*').eq('id', req.params.id).single();
+  if (error) return enviarError(res, 404, 'Encargo no encontrado');
+
+  const { data: abonos } = await db.from('encargo_abonos')
+    .select('*').eq('encargo_id', req.params.id).order('id');
+
+  res.json({ ...encargo, abonos: abonos || [] });
+});
+
+app.post('/api/encargos', auth(), async (req, res) => {
+  const { datos, error: errValidacion } = sanearEncargo(req.body);
+  if (errValidacion) return enviarError(res, 400, errValidacion);
+
+  const abonoInicial = num(req.body?.abono_inicial);
+  if (abonoInicial > datos.monto_total) return enviarError(res, 400, 'El abono no puede superar el monto total');
+
+  const registro = {
+    ...datos,
+    monto_abonado: abonoInicial,
+    saldo: datos.monto_total - abonoInicial,
+    estado: estadoEncargo(datos.monto_total, abonoInicial)
+  };
+
+  const { data: encargo, error } = await db.from('encargos').insert([registro]).select().single();
+  if (error) return enviarError(res, 500, error.message);
+
+  if (abonoInicial > 0) {
+    await db.from('encargo_abonos').insert([{
+      encargo_id: encargo.id,
+      monto: abonoInicial,
+      metodo_pago: req.body?.metodo_pago || 'Efectivo',
+      nota: 'Abono inicial'
+    }]);
+  }
+
+  res.status(201).json(encargo);
+});
+
+app.put('/api/encargos/:id', auth(), async (req, res) => {
+  const { datos, error: errValidacion } = sanearEncargo(req.body);
+  if (errValidacion) return enviarError(res, 400, errValidacion);
+
+  const { data: actual, error: errActual } = await db.from('encargos').select('*').eq('id', req.params.id).single();
+  if (errActual) return enviarError(res, 404, 'Encargo no encontrado');
+
+  const abonado = num(actual.monto_abonado);
+  if (datos.monto_total < abonado) {
+    return enviarError(res, 400, `El monto total no puede ser menor a lo ya abonado (${abonado})`);
+  }
+
+  const cambios = {
+    ...datos,
+    saldo: datos.monto_total - abonado,
+    estado: estadoEncargo(datos.monto_total, abonado)
+  };
+
+  const { data, error } = await db.from('encargos').update(cambios).eq('id', req.params.id).select().single();
+  if (error) return enviarError(res, 500, error.message);
+  res.json(data);
+});
+
+/* Registrar un abono: suma al total abonado y recalcula saldo y estado */
+app.post('/api/encargos/:id/abono', auth(), async (req, res) => {
+  const monto = num(req.body?.monto);
+  if (monto <= 0) return enviarError(res, 400, 'El abono debe ser mayor a 0');
+
+  const { data: encargo, error: errEncargo } = await db.from('encargos').select('*').eq('id', req.params.id).single();
+  if (errEncargo) return enviarError(res, 404, 'Encargo no encontrado');
+  if (encargo.estado === 'PAGADO') return enviarError(res, 400, 'Este encargo ya está pagado');
+
+  const abonado = num(encargo.monto_abonado) + monto;
+  if (abonado > num(encargo.monto_total) + 0.001) {
+    return enviarError(res, 400, 'El abono supera el saldo pendiente');
+  }
+
+  const { error: errAbono } = await db.from('encargo_abonos').insert([{
+    encargo_id: encargo.id,
+    monto,
+    metodo_pago: req.body?.metodo_pago || 'Efectivo',
+    nota: (req.body?.nota || '').trim() || null
+  }]);
+  if (errAbono) return enviarError(res, 500, errAbono.message);
+
+  const { data, error } = await db.from('encargos').update({
+    monto_abonado: abonado,
+    saldo: num(encargo.monto_total) - abonado,
+    estado: estadoEncargo(num(encargo.monto_total), abonado)
+  }).eq('id', encargo.id).select().single();
+
+  if (error) return enviarError(res, 500, error.message);
+
+  const { data: abonos } = await db.from('encargo_abonos').select('*').eq('encargo_id', encargo.id).order('id');
+  res.json({ ...data, abonos: abonos || [], ultimo_abono: monto });
+});
+
+app.delete('/api/encargos/:id', auth(true), async (req, res) => {
+  const { error } = await db.from('encargos').delete().eq('id', req.params.id);
   if (error) return enviarError(res, 500, error.message);
   res.json({ ok: true });
 });

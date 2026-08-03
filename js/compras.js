@@ -30,6 +30,7 @@ const elBtnFiltrarCompras = document.getElementById('btnFiltrarCompras');
 const elComprasChipsDocs = document.getElementById('comprasChipsDocs');
 const elComprasPeriodoLabel = document.getElementById('comprasPeriodoLabel');
 const elCheckTodasCompras = document.getElementById('checkTodasCompras');
+const elComprasBuscar = document.getElementById('comprasBuscar');
 
 const elKpiComprasMes = document.getElementById('kpiComprasMes');
 const elKpiComprasMesDetalle = document.getElementById('kpiComprasMesDetalle');
@@ -70,6 +71,7 @@ function setDefaultDatesCompras() {
 
 function setupComprasEventListeners() {
   if (elBtnFiltrarCompras) elBtnFiltrarCompras.addEventListener('click', cargarCompras);
+  if (elComprasBuscar) elComprasBuscar.addEventListener('input', () => renderComprasTabla(comprasList));
   if (elComprasClasificacionFiltro) elComprasClasificacionFiltro.addEventListener('change', cargarCompras);
 
   if (elComprasChipsDocs) {
@@ -177,8 +179,29 @@ function actualizarBarraCompras() {
   mostrarBarraSeleccion(cantidad, {
     onJSON: descargarComprasJSON,
     onCSV: descargarComprasExcel,
+    onEliminar: eliminarComprasSeleccionadas,
     onLimpiar: () => { comprasSeleccionadas.clear(); renderComprasTabla(comprasList); }
   });
+}
+
+async function eliminarComprasSeleccionadas() {
+  const seleccion = comprasMarcadas();
+  if (seleccion.length === 0) return;
+
+  if (!confirm(`¿Estás seguro de que deseas eliminar los ${seleccion.length} registros seleccionados? Esta acción no se puede deshacer.`)) return;
+
+  try {
+    const r = await API.compras.eliminarLote(seleccion.map(c => c.id));
+
+    comprasSeleccionadas.clear();
+    ocultarBarraSeleccion();
+    showToast(`${r.eliminadas} compra(s) eliminada(s)`, 'ok');
+
+    await cargarCompras();   // tabla y KPIs recalculados
+  } catch (err) {
+    console.error('Error al eliminar las compras:', err.message || err);
+    showToast(err.message || 'No se pudieron eliminar las compras', 'err');
+  }
 }
 
 function comprasMarcadas() {
@@ -222,8 +245,17 @@ function descargarComprasExcel() {
   showToast(`${filas.length} compra(s) exportada(s) a Excel`, 'ok');
 }
 
-function renderComprasTabla(lista) {
+function renderComprasTabla(listaOriginal) {
   if (!elComprasTableBody) return;
+
+  // Filtro de texto local (proveedor, detalle o clasificación)
+  const texto = (elComprasBuscar?.value || '').trim().toLowerCase();
+  const lista = texto
+    ? (listaOriginal || []).filter(c =>
+        (c.proveedor || '').toLowerCase().includes(texto) ||
+        (c.descripcion || '').toLowerCase().includes(texto) ||
+        (c.clasificacion || '').toLowerCase().includes(texto))
+    : (listaOriginal || []);
 
   if (!lista || lista.length === 0) {
     elComprasTableBody.innerHTML = '<tr class="empty-row"><td colspan="8">No hay compras registradas con estos filtros.</td></tr>';

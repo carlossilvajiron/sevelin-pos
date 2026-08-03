@@ -9,6 +9,7 @@
 let cart = [];
 let productoSeleccionado = null;
 let ultimaVentaRegistrada = null;
+let otVinculadaVenta = null;   // OT que se está cobrando en esta venta
 
 const elBuscarProducto = document.getElementById('posBuscarProducto');
 const elSugerencias = document.getElementById('posSugerencias');
@@ -26,6 +27,10 @@ const elCartTableBody = document.getElementById('cartTableBody');
 const elCartTotalText = document.getElementById('cartTotalText');
 const elBtnFinalizarVenta = document.getElementById('btnFinalizarVenta');
 const elBtnLimpiarSeleccion = document.getElementById('btnLimpiarSeleccion');
+const elPosSincronizarOT = document.getElementById('posSincronizarOT');
+const elPosBuscarOT = document.getElementById('posBuscarOT');
+const elPosSugerenciasOT = document.getElementById('posSugerenciasOT');
+const elPosOTVinculada = document.getElementById('posOTVinculada');
 
 const elModalVentaExitosa = document.getElementById('modalVentaExitosa');
 const elVentaExitosaDetalle = document.getElementById('ventaExitosaDetalle');
@@ -91,6 +96,24 @@ function setupPosEventListeners() {
     if (ultimaVentaRegistrada) imprimirTicketVenta(ultimaVentaRegistrada, ultimaVentaRegistrada.items);
   });
   if (elBtnCloseVentaExitosa) elBtnCloseVentaExitosa.addEventListener('click', cerrarModalVentaExitosa);
+
+  // Vinculación manual de una OT a la venta en curso
+  if (elPosSincronizarOT) elPosSincronizarOT.addEventListener('change', () => {
+    if (elPosBuscarOT) {
+      elPosBuscarOT.disabled = !elPosSincronizarOT.checked;
+      if (elPosSincronizarOT.checked) elPosBuscarOT.focus();
+    }
+    if (!elPosSincronizarOT.checked) desvincularOT();
+  });
+
+  if (elPosBuscarOT) {
+    elPosBuscarOT.addEventListener('input', buscarOTParaVenta);
+    document.addEventListener('click', (e) => {
+      if (elPosSugerenciasOT && e.target !== elPosBuscarOT && !elPosSugerenciasOT.contains(e.target)) {
+        elPosSugerenciasOT.classList.remove('show');
+      }
+    });
+  }
 
   // Enter en el precio agrega el ítem directamente
   if (elItemPrecio) elItemPrecio.addEventListener('keydown', (e) => {
@@ -166,6 +189,74 @@ function actualizarUtilidadPreview() {
   const precio = Number(elItemPrecio?.value) || 0;
   const utilidad = (precio - costo) * cant;
   elUtilidadPreview.textContent = cant > 0 ? `Utilidad estimada: ${fmtCLP(utilidad)}` : '';
+}
+
+// ============================================================
+// Vínculo con una Orden de Trabajo
+// ============================================================
+async function buscarOTParaVenta() {
+  if (!elPosSugerenciasOT) return;
+  const q = (elPosBuscarOT.value || '').trim().toLowerCase();
+
+  if (q.length < 2) { elPosSugerenciasOT.classList.remove('show'); return; }
+
+  let ordenes = (typeof ordenesList !== 'undefined' && Array.isArray(ordenesList)) ? ordenesList : [];
+  if (ordenes.length === 0) {
+    try { ordenes = await API.ot.listar(); } catch (_) { ordenes = []; }
+  }
+
+  const encontradas = ordenes.filter(o =>
+    (o.numero_ot || '').toLowerCase().includes(q) ||
+    (o.cliente_nombre || '').toLowerCase().includes(q) ||
+    (o.dispositivo_modelo || '').toLowerCase().includes(q)
+  ).slice(0, 8);
+
+  if (encontradas.length === 0) { elPosSugerenciasOT.classList.remove('show'); return; }
+
+  elPosSugerenciasOT.innerHTML = encontradas.map(o => `
+    <div class="suggestion-item" data-ot="${o.id}">
+      <span>${o.numero_ot} · ${o.cliente_nombre || 'Sin cliente'}</span>
+      <span>${o.dispositivo_modelo || ''}</span>
+    </div>
+  `).join('');
+  elPosSugerenciasOT.classList.add('show');
+
+  elPosSugerenciasOT.querySelectorAll('.suggestion-item').forEach(item => {
+    item.addEventListener('click', async () => {
+      const orden = encontradas.find(o => String(o.id) === item.dataset.ot);
+      elPosSugerenciasOT.classList.remove('show');
+      if (!orden) return;
+
+      let pendientes = [];
+      try {
+        const asignados = await API.ot.listarRepuestos(orden.id);
+        pendientes = (asignados || []).filter(r => !r.cobrado);
+      } catch (_) { pendientes = []; }
+
+      precargarVentaDesdeOT(orden, pendientes);
+    });
+  });
+}
+
+function mostrarOTVinculadaPOS() {
+  if (!elPosOTVinculada) return;
+
+  if (!otVinculadaVenta) { elPosOTVinculada.style.display = 'none'; return; }
+
+  elPosOTVinculada.style.display = 'block';
+  elPosOTVinculada.innerHTML =
+    `Venta vinculada a <b>${otVinculadaVenta.numero_ot}</b> · ${otVinculadaVenta.cliente_nombre || ''} — ` +
+    `<a href="#" id="quitarOTVenta">quitar vínculo</a>`;
+
+  const quitar = document.getElementById('quitarOTVenta');
+  if (quitar) quitar.addEventListener('click', (e) => { e.preventDefault(); desvincularOT(); });
+}
+
+function desvincularOT() {
+  otVinculadaVenta = null;
+  if (elPosSincronizarOT) elPosSincronizarOT.checked = false;
+  if (elPosBuscarOT) { elPosBuscarOT.value = ''; elPosBuscarOT.disabled = true; }
+  mostrarOTVinculadaPOS();
 }
 
 // ============================================================
@@ -282,6 +373,9 @@ async function confirmarVenta(metodoPago, datosPago = {}) {
     hora: horaActualCorta(),
     cliente: elPosCliente?.value.trim() || null,
     metodo_pago: metodoPago,
+    // El backend descuenta el stock (comercial e interno) recién aquí
+    ot_id: otVinculadaVenta?.id || null,
+    numero_ot: otVinculadaVenta?.numero_ot || null,
     items: cart
   });
 
@@ -291,6 +385,7 @@ async function confirmarVenta(metodoPago, datosPago = {}) {
   cart = [];
   renderCart();
   limpiarFormularioItem();
+  desvincularOT();
   if (elPosCliente) elPosCliente.value = '';
 
   mostrarModalVentaExitosa(venta, datosPago);
@@ -326,13 +421,43 @@ function mostrarModalVentaExitosa(venta, datosPago = {}) {
   if (elModalVentaExitosa) elModalVentaExitosa.classList.add('show');
 }
 
-/* Precarga el POS con el cobro de una orden de trabajo (botón "Cobrar en POS") */
-function precargarVentaDesdeOT(ot) {
+/* Precarga el POS con el cobro de una orden de trabajo.
+   Vincula la OT a la venta y baja al carrito los repuestos y la mano de
+   obra que le fueron asignados y aún no se han cobrado. */
+function precargarVentaDesdeOT(ot, itemsAsignados = []) {
+  otVinculadaVenta = ot;
+
+  if (elPosSincronizarOT) elPosSincronizarOT.checked = true;
+  if (elPosBuscarOT) { elPosBuscarOT.disabled = false; elPosBuscarOT.value = ''; }
   if (elPosCliente) elPosCliente.value = ot.cliente_nombre || '';
-  if (elItemNombre) elItemNombre.value = `Servicio técnico ${ot.numero_ot} · ${ot.dispositivo_modelo || ''}`.trim();
-  if (elItemCantidad) elItemCantidad.value = 1;
-  if (elItemPrecio) { elItemPrecio.value = ''; elItemPrecio.focus(); }
+  mostrarOTVinculadaPOS();
+
+  // Los ítems ya asignados en el taller entran al carrito desglosados
+  (itemsAsignados || []).forEach(item => {
+    const cantidad = Number(item.cantidad) || 1;
+    const precio = Number(item.precio_unitario) || 0;
+    cart.push({
+      producto_id: item.producto_id || null,
+      repuesto_id: item.repuesto_id || null,
+      sku: null,
+      nombre: item.nombre,
+      cantidad,
+      costo_unitario: esAdmin() ? (Number(item.costo_unitario) || 0) : 0,
+      precio_unitario: precio,
+      subtotal: precio * cantidad,
+      serial_number: null
+    });
+  });
+
+  if ((itemsAsignados || []).length === 0 && elItemNombre) {
+    // Sin repuestos asignados: se deja lista una línea de servicio
+    elItemNombre.value = `Servicio técnico ${ot.numero_ot} · ${ot.dispositivo_modelo || ''}`.trim();
+    if (elItemCantidad) elItemCantidad.value = 1;
+    if (elItemPrecio) { elItemPrecio.value = ''; setTimeout(() => elItemPrecio.focus(), 60); }
+  }
+
   productoSeleccionado = null;
+  renderCart();
   actualizarUtilidadPreview();
 }
 

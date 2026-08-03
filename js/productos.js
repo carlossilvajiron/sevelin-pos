@@ -12,6 +12,7 @@ let editingProductId = null;
 /* Íconos SVG: heredan el color del botón, así el lápiz nunca se pierde
    contra el fondo (antes era un emoji sobre un degradado dorado). */
 const ICO_EDITAR_PROD = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>`;
+const ICO_ETIQUETA_PROD = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.6 13.4 12 22l-9-9V3h10l7.6 7.6a2 2 0 0 1 0 2.8Z"/><circle cx="7.5" cy="7.5" r="1.2"/></svg>`;
 const ICO_ELIMINAR_PROD = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></svg>`;
 
 const elProductosTableBody = document.getElementById('productosTableBody');
@@ -26,6 +27,7 @@ const elProdCosto = document.getElementById('prodCosto');
 const elProdPrecio = document.getElementById('prodPrecio');
 const elProdStock = document.getElementById('prodStock');
 const elProdRequiereSN = document.getElementById('prodRequiereSN');
+const elProdEsRepuesto = document.getElementById('prodEsRepuesto');
 const elProdStockMinimo = document.getElementById('prodStockMinimo');
 const elProdSinAlertaStock = document.getElementById('prodSinAlertaStock');
 const elProdStockActualizado = document.getElementById('prodStockActualizado');
@@ -226,9 +228,10 @@ function renderProductosTabla(items) {
       <td>${badgeStock(p)}</td>
       <td class="stock-fecha">${p.stock_actualizado_en ? tsAChile(p.stock_actualizado_en) : '—'}</td>
       <td>${resumenMedidas(p)}</td>
-      <td>${p.requiere_sn ? '✅ Sí' : '—'}</td>
+      <td>${p.requiere_sn ? '✅ Sí' : '—'}${p.es_repuesto ? '<br><span class="badge badge-gold">Repuesto</span>' : ''}</td>
       <td>
         <div class="cell-actions">
+          <button class="btn btn-icon btn-icon-view" data-etiqueta="${p.id}" title="Imprimir etiqueta de código de barras">${ICO_ETIQUETA_PROD}</button>
           <button class="btn btn-icon btn-icon-edit" data-editar="${p.id}" title="Editar producto">${ICO_EDITAR_PROD}</button>
           <button class="btn btn-icon btn-icon-del" data-eliminar="${p.id}" title="Eliminar producto">${ICO_ELIMINAR_PROD}</button>
         </div>
@@ -240,6 +243,13 @@ function renderProductosTabla(items) {
     btn.addEventListener('click', () => {
       const producto = productsList.find(p => String(p.id) === btn.dataset.editar);
       if (producto) abrirModalProducto(producto);
+    });
+  });
+
+  elProductosTableBody.querySelectorAll('button[data-etiqueta]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const producto = productsList.find(p => String(p.id) === btn.dataset.etiqueta);
+      if (producto && typeof abrirModalEtiqueta === 'function') abrirModalEtiqueta(producto);
     });
   });
 
@@ -304,6 +314,7 @@ function abrirModalProducto(producto = null) {
     if (elProdPrecio) elProdPrecio.value = producto.precio_unitario || 0;
     if (elProdStock) elProdStock.value = producto.stock || 0;
     if (elProdRequiereSN) elProdRequiereSN.checked = !!producto.requiere_sn;
+    if (elProdEsRepuesto) elProdEsRepuesto.checked = !!producto.es_repuesto;
     if (elProdStockMinimo) elProdStockMinimo.value = producto.stock_minimo ?? STOCK_MINIMO_POR_DEFECTO;
     if (elProdSinAlertaStock) elProdSinAlertaStock.checked = producto.alerta_stock === false;
     if (elProdStockActualizado) {
@@ -324,6 +335,7 @@ function abrirModalProducto(producto = null) {
     [elProdCosto, elProdPrecio, elProdStock, elProdPeso, elProdAlto, elProdAncho, elProdProfundidad]
       .forEach(el => { if (el) el.value = 0; });
     if (elProdRequiereSN) elProdRequiereSN.checked = false;
+    if (elProdEsRepuesto) elProdEsRepuesto.checked = false;
     if (elProdStockMinimo) elProdStockMinimo.value = STOCK_MINIMO_POR_DEFECTO;
     if (elProdSinAlertaStock) elProdSinAlertaStock.checked = false;
     if (elProdStockActualizado) elProdStockActualizado.textContent = 'Última actualización de stock: se registrará al guardar.';
@@ -351,6 +363,7 @@ async function guardarProducto() {
     precio_unitario: Number(elProdPrecio?.value) || 0,
     stock: Number(elProdStock?.value) || 0,
     requiere_sn: !!(elProdRequiereSN && elProdRequiereSN.checked),
+    es_repuesto: !!(elProdEsRepuesto && elProdEsRepuesto.checked),
     stock_minimo: Number(elProdStockMinimo?.value) || 0,
     alerta_stock: !(elProdSinAlertaStock && elProdSinAlertaStock.checked),
     peso_kg: Number(elProdPeso?.value) || 0,

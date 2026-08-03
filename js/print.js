@@ -9,6 +9,42 @@
      localStorage.setItem('pos_ticket_ancho', '80mm')
    ============================================================ */
 
+/* QR de reseñas de Google: se agrega solo si el usuario lo marca en la
+   pantalla de confirmación, y se pregunta en cada impresión. */
+const URL_RESENA_GOOGLE = 'https://g.page/r/CZzFra1V3A9aEAE/review';
+
+function deseaQRResena() {
+  const chk = document.getElementById('chkQrResena');
+  return !!(chk && chk.checked);
+}
+
+/* Genera el QR como imagen y lo inserta al final del ticket ya renderizado */
+async function agregarQRResena(container) {
+  if (!container || typeof QRCode === 'undefined') return;
+
+  try {
+    const dataUrl = await QRCode.toDataURL(URL_RESENA_GOOGLE, {
+      margin: 1, width: 220, color: { dark: '#000000', light: '#ffffff' }
+    });
+
+    const bloque = document.createElement('div');
+    bloque.className = 't-qr';
+    bloque.innerHTML = `
+      <div class="t-line"></div>
+      <p class="t-center"><b>¿Cómo fue tu experiencia?</b></p>
+      <img src="${dataUrl}" alt="QR de reseña">
+      <p class="t-center t-small">Escanea y déjanos tu reseña en Google</p>
+    `;
+
+    // Se inserta antes del espacio de corte del papel
+    const feed = container.querySelector('.t-feed');
+    if (feed) container.insertBefore(bloque, feed);
+    else container.appendChild(bloque);
+  } catch (err) {
+    console.warn('No se pudo generar el QR de reseña:', err.message || err);
+  }
+}
+
 function anchoTicket() {
   return localStorage.getItem('pos_ticket_ancho') || '58mm';
 }
@@ -76,7 +112,7 @@ function restaurarTitulo() {
 }
 
 /* Imprime el ticket. Se usa al finalizar la venta y al reimprimir. */
-function imprimirTicketVenta(venta, items) {
+function imprimirTicketVenta(venta, items, opciones) {
   const container = document.getElementById('ticketContainer');
   if (!container) return;
 
@@ -90,15 +126,20 @@ function imprimirTicketVenta(venta, items) {
   const numero = String(venta.numero_orden ?? venta.id ?? 0).padStart(5, '0');
   ponerTituloImpresion(`Ticket ${numero} - SEVELIN`);
 
-  // Pequeño respiro para que el navegador pinte el ticket antes del diálogo
-  setTimeout(() => {
+  const conQR = (opciones && opciones.qr !== undefined) ? opciones.qr : deseaQRResena();
+
+  const lanzar = () => setTimeout(() => {
     window.print();
     setTimeout(restaurarTitulo, 1500);   // por si no llega el evento afterprint
   }, 120);
+
+  // Si va con QR hay que esperar a que la imagen esté generada
+  if (conQR) agregarQRResena(container).then(lanzar);
+  else lanzar();
 }
 
-function reimprimirTicket(venta, items) {
-  imprimirTicketVenta(venta, items);
+function reimprimirTicket(venta, items, opciones) {
+  imprimirTicketVenta(venta, items, opciones);
 }
 
 /* ============================================================
@@ -213,15 +254,127 @@ function imprimirOrdenTrabajo(ot) {
   }, 150);
 }
 
+/* ============================================================
+   COMPROBANTE DE ABONO (58 mm / 80 mm)
+   Detalla la seña recibida y el saldo que queda por pagar.
+   ============================================================ */
+function imprimirTicketAbono(encargo, montoAbono) {
+  const container = document.getElementById('ticketContainer');
+  if (!container || !encargo) return;
+
+  aplicarAnchoTicket();
+
+  const abonoMostrado = montoAbono !== undefined && montoAbono !== null
+    ? Number(montoAbono)
+    : Number(encargo.monto_abonado) || 0;
+
+  const historial = (encargo.abonos || []).map(a => `
+    <tr>
+      <td class="t-desc">${tsAChile(a.fecha).slice(0, 16)}<div class="t-sn">${escaparHTML(a.metodo_pago || '')}</div></td>
+      <td class="t-right">${fmtCLP(a.monto)}</td>
+    </tr>
+  `).join('');
+
+  container.innerHTML = `
+    <div class="t-head">
+      <h3>${escaparHTML(NEGOCIO_NOMBRE)}</h3>
+      <p>Comprobante de Abono</p>
+      ${encargo.numero_ot ? `<p><b>${escaparHTML(encargo.numero_ot)}</b></p>` : ''}
+    </div>
+    <div class="t-line"></div>
+    <p><b>Fecha:</b> ${fechaHoraChile()}</p>
+    <p><b>Cliente:</b> ${escaparHTML(encargo.cliente_nombre || 'Cliente')}</p>
+    ${encargo.cliente_telefono ? `<p><b>Teléfono:</b> ${escaparHTML(encargo.cliente_telefono)}</p>` : ''}
+    <div class="t-line"></div>
+    <p><b>Encargo:</b></p>
+    <p>${escaparHTML(encargo.descripcion || '')}</p>
+    <div class="t-line"></div>
+    ${historial ? `<p><b>Abonos registrados:</b></p><table><tbody>${historial}</tbody></table><div class="t-line"></div>` : ''}
+    <div class="t-total"><span>ABONO</span><span>${fmtCLP(abonoMostrado)}</span></div>
+    <p style="display:flex; justify-content:space-between;"><span>Total encargo</span><span>${fmtCLP(encargo.monto_total)}</span></p>
+    <p style="display:flex; justify-content:space-between;"><span>Total abonado</span><span>${fmtCLP(encargo.monto_abonado)}</span></p>
+    <div class="t-line"></div>
+    <div class="t-total"><span>SALDO</span><span>${fmtCLP(encargo.saldo)}</span></div>
+    <div class="t-line"></div>
+    <p class="t-center">${Number(encargo.saldo) <= 0 ? 'ENCARGO PAGADO POR COMPLETO' : 'Este documento acredita la seña recibida.'}</p>
+    <p class="t-center">¡Gracias por su compra!</p>
+    <p class="t-center t-small">${escaparHTML(NEGOCIO_NOMBRE)} · ${fechaHoraChile()}</p>
+    <div class="t-feed"></div>
+  `;
+
+  document.body.classList.remove('print-ot', 'print-etiqueta', 'print-ficha');
+  document.body.classList.add('print-ticket');
+  ponerTituloImpresion(`Abono ${encargo.numero_ot || encargo.cliente_nombre} - SEVELIN`);
+
+  const lanzar = () => setTimeout(() => {
+    window.print();
+    setTimeout(restaurarTitulo, 1500);
+  }, 150);
+
+  if (deseaQRResena()) agregarQRResena(container).then(lanzar);
+  else lanzar();
+}
+
+/* ============================================================
+   FICHA MANUAL DE CLIENTE
+   Mini plantilla recortable para que el cliente complete sus datos a mano.
+   ============================================================ */
+function imprimirFichaManual() {
+  const area = document.getElementById('fichaPrintArea');
+  if (!area) return;
+
+  const lineas = [
+    'Nombre y apellidos',
+    'RUT / ID',
+    'Teléfono',
+    'Correo electrónico',
+    'Dirección'
+  ].map(campo => `
+    <div class="ficha-campo">
+      <span>${campo}</span>
+      <span class="ficha-linea"></span>
+    </div>
+  `).join('');
+
+  const ficha = `
+    <div class="ficha-doc">
+      <div class="ficha-head">
+        <h3>${escaparHTML(NEGOCIO_NOMBRE)}</h3>
+        <p>Ficha de datos del cliente · Servicio Técnico</p>
+      </div>
+      ${lineas}
+      <p class="ficha-nota">Complete sus datos con letra clara. Solo el nombre es obligatorio;
+      el resto nos sirve para avisarle cuando su equipo esté listo.</p>
+      <div class="ficha-campo">
+        <span>Firma</span>
+        <span class="ficha-linea"></span>
+      </div>
+      <p class="ficha-fecha">Fecha: ${fechaHoraChile()}</p>
+    </div>
+  `;
+
+  // Dos copias por hoja para aprovechar el papel
+  area.innerHTML = ficha + '<div class="ficha-corte">— — — — —  corte aquí  — — — — —</div>' + ficha;
+
+  document.body.classList.remove('print-ticket', 'print-ot', 'print-etiqueta');
+  document.body.classList.add('print-ficha');
+  ponerTituloImpresion('Ficha de cliente - SEVELIN');
+
+  setTimeout(() => {
+    window.print();
+    setTimeout(restaurarTitulo, 1500);
+  }, 150);
+}
+
 /* Al cerrar el diálogo de impresión se limpian los modos */
 window.addEventListener('afterprint', () => {
-  document.body.classList.remove('print-ticket', 'print-ot');
+  document.body.classList.remove('print-ticket', 'print-ot', 'print-etiqueta', 'print-ficha');
   restaurarTitulo();
 });
 
 /* Respaldo por si el navegador no dispara afterprint (algunos móviles) */
 function restaurarEstadoImpresion() {
-  document.body.classList.remove('print-ticket', 'print-ot');
+  document.body.classList.remove('print-ticket', 'print-ot', 'print-etiqueta', 'print-ficha');
   restaurarTitulo();
 }
 

@@ -164,6 +164,8 @@ function initNavegacion() {
       if (viewId === 'view-productos' && typeof cargarProductos === 'function') cargarProductos();
       if (viewId === 'view-compras' && typeof cargarCompras === 'function') cargarCompras();
       if (viewId === 'view-taller' && typeof cargarOrdenes === 'function') cargarOrdenes();
+      if (viewId === 'view-encargos' && typeof cargarEncargos === 'function') cargarEncargos();
+      if (viewId === 'view-repuestos' && typeof cargarRepuestos === 'function') cargarRepuestos();
 
       // Aviso para los módulos que necesitan reaccionar (p. ej. foco del lector en POS)
       document.dispatchEvent(new CustomEvent('pos:vista-activa', { detail: { vista: viewId } }));
@@ -187,10 +189,14 @@ function mostrarBarraSeleccion(cantidad, acciones = {}) {
 
   const btnJSON = document.getElementById('btnDescargarJSON');
   const btnCSV = document.getElementById('btnDescargarCSV');
+  const btnEliminar = document.getElementById('btnEliminarSeleccionadas');
   const btnLimpiar = document.getElementById('btnLimpiarSeleccionBarra');
 
+  // El borrado masivo solo se ofrece si el módulo lo soporta y hay permisos
+  if (btnEliminar) btnEliminar.style.display = (acciones.onEliminar && esAdmin()) ? '' : 'none';
+
   // Se reemplazan los botones para no acumular listeners de vistas anteriores
-  [[btnJSON, acciones.onJSON], [btnCSV, acciones.onCSV], [btnLimpiar, acciones.onLimpiar]]
+  [[btnJSON, acciones.onJSON], [btnCSV, acciones.onCSV], [btnEliminar, acciones.onEliminar], [btnLimpiar, acciones.onLimpiar]]
     .forEach(([btn, handler]) => {
       if (!btn || !handler) return;
       const nuevo = btn.cloneNode(true);

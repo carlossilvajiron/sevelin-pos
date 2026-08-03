@@ -755,9 +755,44 @@ a.doc-check.doc-ok:hover { transform: scale(1.1); }
 .doc-check.doc-falta { cursor: pointer; transition: transform var(--speed), background-color var(--speed); }
 .doc-check.doc-falta:hover { transform: scale(1.12); background: rgba(239, 68, 68, .3); }
 
-/* ========== 15. IMPRESIÓN ========== */
+/* ========== 15. ESCÁNER, ETIQUETAS Y FICHAS ========== */
+.input-scan { display: flex; gap: 8px; align-items: stretch; }
+.input-scan input { flex: 1; }
+.btn-scan {
+    flex: 0 0 auto; width: var(--control-h); padding: 0; font-size: 18px; line-height: 1;
+}
+.btn-scan:hover { border-color: var(--blue-light); }
+
+.escaner-lector {
+    width: 100%; min-height: 240px; margin-top: 14px;
+    background: #000; border-radius: var(--radius-sm); overflow: hidden;
+    border: 1.5px solid var(--border-strong);
+}
+.escaner-lector video { width: 100% !important; height: auto !important; display: block; }
+.escaner-lector img { max-width: 100%; }
+
+.opcional { font-weight: 500; color: var(--text-muted); font-size: 11.5px; }
+.obligatorio { color: var(--red); font-weight: 800; }
+
+/* Vista previa de la etiqueta: refleja el ancho real del papel */
+.etiqueta-preview {
+    --etq-ancho: 58mm;
+    display: flex; justify-content: center; padding: 14px;
+    background: #fff; border: 1.5px dashed var(--border-strong); border-radius: var(--radius-sm);
+}
+.etiqueta {
+    width: var(--etq-ancho); max-width: 100%;
+    padding: 3mm 2mm; text-align: center; color: #000;
+    font-family: 'Segoe UI', Arial, sans-serif;
+    page-break-inside: avoid; break-inside: avoid;
+}
+.etq-nombre { font-weight: 600; line-height: 1.2; margin-bottom: 1.5mm; word-break: break-word; }
+.etq-precio { font-weight: 800; margin-bottom: 1.5mm; }
+.etq-barcode { display: block; margin: 0 auto; max-width: 100%; }
+
+/* ========== 16. IMPRESIÓN ========== */
 :root { --ticket-ancho: 58mm; }
-#ticketContainer, #otPrintArea { display: none; }
+#ticketContainer, #otPrintArea, #etiquetaPrintArea, #fichaPrintArea { display: none; }
 
 @page { margin: 0; }
 
@@ -787,6 +822,42 @@ a.doc-check.doc-ok:hover { transform: scale(1.1); }
     body.print-ot #otPrintArea .ot-firma-box small { color: #475569; }
     body.print-ot #otPrintArea .ot-firma-linea { border-top: 1px solid #0f172a; }
     body.print-ot #otPrintArea .ot-corte { color: #64748b; margin: 6mm 0; }
+
+    /* Etiquetas de código de barras */
+    body.print-etiqueta #etiquetaPrintArea, body.print-etiqueta #etiquetaPrintArea * { visibility: visible !important; }
+    body.print-etiqueta #etiquetaPrintArea {
+        display: block !important;
+        position: absolute; left: 0; top: 0;
+        width: var(--etq-ancho, 58mm);
+        background: #fff; color: #000;
+    }
+    body.print-etiqueta #etiquetaPrintArea .etiqueta {
+        width: var(--etq-ancho, 58mm);
+        border-bottom: 1px dotted #999;
+        padding: 2mm 1.5mm 3mm;
+    }
+
+    /* Ficha manual de cliente (hoja normal, dos copias) */
+    body.print-ficha #fichaPrintArea, body.print-ficha #fichaPrintArea * { visibility: visible !important; }
+    body.print-ficha #fichaPrintArea {
+        display: block !important;
+        position: absolute; left: 0; top: 0; width: 100%;
+        padding: 10mm; background: #fff; color: #000;
+        font-family: 'Segoe UI', Arial, sans-serif;
+    }
+    body.print-ficha .ficha-doc {
+        border: 1px solid #94a3b8; border-radius: 4px;
+        padding: 7mm; margin-bottom: 4mm; page-break-inside: avoid;
+    }
+    body.print-ficha .ficha-head { text-align: center; margin-bottom: 6mm; }
+    body.print-ficha .ficha-head h3 { font-size: 17px; font-weight: 800; }
+    body.print-ficha .ficha-head p { font-size: 11px; color: #475569; }
+    body.print-ficha .ficha-campo { display: flex; align-items: flex-end; gap: 3mm; margin-bottom: 6mm; font-size: 11px; }
+    body.print-ficha .ficha-campo > span:first-child { min-width: 38mm; color: #334155; }
+    body.print-ficha .ficha-linea { flex: 1; border-bottom: 1px solid #0f172a; height: 5mm; }
+    body.print-ficha .ficha-nota { font-size: 9.5px; color: #64748b; margin: 4mm 0 6mm; }
+    body.print-ficha .ficha-fecha { font-size: 9.5px; color: #64748b; text-align: right; }
+    body.print-ficha .ficha-corte { text-align: center; font-size: 9px; color: #94a3b8; margin: 3mm 0; }
 
     /* Ticket térmico */
     body.print-ticket #ticketContainer, body.print-ticket #ticketContainer * { visibility: visible !important; }
@@ -828,4 +899,10 @@ a.doc-check.doc-ok:hover { transform: scale(1.1); }
 @keyframes latido {
     0%, 100% { transform: none; }
     50% { transform: scale(1.05); }
+}
+
+/* QR de reseñas al pie del ticket térmico */
+@media print {
+    body.print-ticket #ticketContainer .t-qr { text-align: center; margin-top: 3mm; }
+    body.print-ticket #ticketContainer .t-qr img { width: 26mm; height: 26mm; display: block; margin: 1.5mm auto; }
 }
