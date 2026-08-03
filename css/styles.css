@@ -797,14 +797,47 @@ a.doc-check.doc-ok:hover { transform: scale(1.1); }
 @page { margin: 0; }
 
 @media print {
-    html, body { margin: 0 !important; padding: 0 !important; background: #fff !important; }
-    body * { visibility: hidden !important; }
+    html, body { margin: 0 !important; padding: 0 !important; background: #fff !important; height: auto !important; }
+
+    /* Se ocultan TODOS los hijos directos del body (header, contenido,
+       modales, toast) para que no ocupen espacio en el documento impreso.
+       Solo se muestra el contenedor del modo activo (print-ticket,
+       print-ot, print-etiqueta o print-ficha). Usar display:none en vez de
+       visibility:hidden es lo que evita la segunda hoja en blanco: un
+       elemento oculto con visibility sigue reservando su alto real, y como
+       el POS completo mide varias pantallas de largo, el navegador
+       terminaba paginando ese espacio invisible. */
+    body > * { display: none !important; }
+
+    /* Ticket térmico */
+    body.print-ticket #ticketContainer {
+        display: block !important;
+        position: static;
+        width: var(--ticket-ancho);
+        max-width: var(--ticket-ancho);
+        font-family: 'Courier New', Courier, monospace;
+        font-size: 11px; line-height: 1.35;
+        color: #000; background: #fff;
+        padding: 2mm 2mm 0;
+    }
+    body.print-ticket #ticketContainer .t-head { text-align: center; margin-bottom: 4px; }
+    body.print-ticket #ticketContainer h3 { font-size: 15px; font-weight: 700; margin-bottom: 2px; }
+    body.print-ticket #ticketContainer p { margin: 1px 0; word-break: break-word; }
+    body.print-ticket #ticketContainer .t-line { border-bottom: 1px dashed #000; margin: 5px 0; }
+    body.print-ticket #ticketContainer table { width: 100%; border-collapse: collapse; font-size: 11px; }
+    body.print-ticket #ticketContainer td { padding: 1px 0; border: none; color: #000; vertical-align: top; }
+    body.print-ticket #ticketContainer .t-desc { width: 68%; }
+    body.print-ticket #ticketContainer .t-right { text-align: right; white-space: nowrap; }
+    body.print-ticket #ticketContainer .t-sn { font-size: 9px; }
+    body.print-ticket #ticketContainer .t-total { display: flex; justify-content: space-between; font-size: 13px; font-weight: 700; }
+    body.print-ticket #ticketContainer .t-center { text-align: center; }
+    body.print-ticket #ticketContainer .t-small { font-size: 9px; }
+    body.print-ticket #ticketContainer .t-feed { height: 12mm; } /* espacio para el corte del papel */
 
     /* Orden de trabajo: hoja normal, dos copias */
-    body.print-ot #otPrintArea, body.print-ot #otPrintArea * { visibility: visible !important; }
     body.print-ot #otPrintArea {
         display: block !important;
-        position: absolute; left: 0; top: 0; width: 100%;
+        position: static; width: 100%;
         padding: 10mm; color: #000; background: #fff;
         font-family: 'Segoe UI', Arial, sans-serif;
     }
@@ -824,10 +857,9 @@ a.doc-check.doc-ok:hover { transform: scale(1.1); }
     body.print-ot #otPrintArea .ot-corte { color: #64748b; margin: 6mm 0; }
 
     /* Etiquetas de código de barras */
-    body.print-etiqueta #etiquetaPrintArea, body.print-etiqueta #etiquetaPrintArea * { visibility: visible !important; }
     body.print-etiqueta #etiquetaPrintArea {
         display: block !important;
-        position: absolute; left: 0; top: 0;
+        position: static;
         width: var(--etq-ancho, 58mm);
         background: #fff; color: #000;
     }
@@ -838,10 +870,9 @@ a.doc-check.doc-ok:hover { transform: scale(1.1); }
     }
 
     /* Ficha manual de cliente (hoja normal, dos copias) */
-    body.print-ficha #fichaPrintArea, body.print-ficha #fichaPrintArea * { visibility: visible !important; }
     body.print-ficha #fichaPrintArea {
         display: block !important;
-        position: absolute; left: 0; top: 0; width: 100%;
+        position: static; width: 100%;
         padding: 10mm; background: #fff; color: #000;
         font-family: 'Segoe UI', Arial, sans-serif;
     }
@@ -858,51 +889,10 @@ a.doc-check.doc-ok:hover { transform: scale(1.1); }
     body.print-ficha .ficha-nota { font-size: 9.5px; color: #64748b; margin: 4mm 0 6mm; }
     body.print-ficha .ficha-fecha { font-size: 9.5px; color: #64748b; text-align: right; }
     body.print-ficha .ficha-corte { text-align: center; font-size: 9px; color: #94a3b8; margin: 3mm 0; }
-
-    /* Ticket térmico */
-    body.print-ticket #ticketContainer, body.print-ticket #ticketContainer * { visibility: visible !important; }
-
-    body.print-ticket #ticketContainer {
-        display: block !important;
-        position: absolute; left: 0; top: 0;
-        width: var(--ticket-ancho);
-        max-width: var(--ticket-ancho);
-        font-family: 'Courier New', Courier, monospace;
-        font-size: 11px; line-height: 1.35;
-        color: #000; background: #fff;
-        padding: 2mm 2mm 0;
-    }
-    #ticketContainer .t-head { text-align: center; margin-bottom: 4px; }
-    #ticketContainer h3 { font-size: 15px; font-weight: 700; margin-bottom: 2px; }
-    #ticketContainer p { margin: 1px 0; word-break: break-word; }
-    #ticketContainer .t-line { border-bottom: 1px dashed #000; margin: 5px 0; }
-    #ticketContainer table { width: 100%; border-collapse: collapse; font-size: 11px; }
-    #ticketContainer td { padding: 1px 0; border: none; color: #000; vertical-align: top; }
-    #ticketContainer .t-desc { width: 68%; }
-    #ticketContainer .t-right { text-align: right; white-space: nowrap; }
-    #ticketContainer .t-sn { font-size: 9px; }
-    #ticketContainer .t-total {
-        display: flex; justify-content: space-between;
-        font-size: 13px; font-weight: 700;
-    }
-    #ticketContainer .t-center { text-align: center; }
-    #ticketContainer .t-small { font-size: 9px; }
-    #ticketContainer .t-feed { height: 12mm; } /* espacio para el corte del papel */
 }
 
-/* Botón resaltado cuando se llega desde el ✖ de la tabla de compras */
-.btn.resaltado {
-    border-color: var(--red) !important;
-    box-shadow: 0 0 0 3px rgba(239, 68, 68, .28);
-    animation: latido 1.1s ease-in-out 2;
-}
-@keyframes latido {
-    0%, 100% { transform: none; }
-    50% { transform: scale(1.05); }
-}
-
-/* QR de reseñas al pie del ticket térmico */
+/* QR de reseñas al pie del ticket térmico (SVG vectorial) */
 @media print {
     body.print-ticket #ticketContainer .t-qr { text-align: center; margin-top: 3mm; }
-    body.print-ticket #ticketContainer .t-qr img { width: 26mm; height: 26mm; display: block; margin: 1.5mm auto; }
+    body.print-ticket #ticketContainer .t-qr svg { width: 26mm; height: 26mm; display: block; margin: 1.5mm auto; }
 }

@@ -227,21 +227,52 @@ function renderPanelBajoStockRepuestos() {
   }
 }
 
+const elModalValorizacionRepuestos = document.getElementById('modalValorizacionRepuestos');
+const elValorizacionRepDetalle = document.getElementById('valorizacionRepDetalle');
+const elValorRepCosto = document.getElementById('valorRepCosto');
+const elValorRepVenta = document.getElementById('valorRepVenta');
+const elValorRepGanancia = document.getElementById('valorRepGanancia');
+const elValorRepMargen = document.getElementById('valorRepMargen');
+const elValorizacionRepNota = document.getElementById('valorizacionRepNota');
+const elBtnCerrarValorizacionRepuestos = document.getElementById('btnCerrarValorizacionRepuestos');
+
 function mostrarValorizacionRepuestos() {
+  if (!elModalValorizacionRepuestos) return;
+
   const costo = repuestosList.reduce((a, r) => a + (Number(r.stock) || 0) * (Number(r.costo_unitario) || 0), 0);
   const venta = repuestosList.reduce((a, r) => a + (Number(r.stock) || 0) * (Number(r.precio_venta) || 0), 0);
+  const ganancia = venta - costo;
   const unidades = repuestosList.reduce((a, r) => a + (Number(r.stock) || 0), 0);
+  const margen = venta > 0 ? (ganancia / venta) * 100 : 0;
+  const sinCosto = repuestosList.filter(r => (Number(r.stock) || 0) > 0 && !(Number(r.costo_unitario) > 0)).length;
 
-  alert(
-    'Valorización del inventario de taller\n\n' +
-    `Repuestos distintos: ${repuestosList.length}\n` +
-    `Unidades en stock: ${unidades}\n\n` +
-    `Costo total: ${fmtCLP(costo)}\n` +
-    `Venta estimada (con mano de obra): ${fmtCLP(venta)}\n` +
-    `Ganancia proyectada: ${fmtCLP(venta - costo)}` +
-    (venta > 0 ? ` (${(((venta - costo) / venta) * 100).toFixed(1)}% de margen)` : '')
-  );
+  if (elValorRepCosto) elValorRepCosto.textContent = fmtCLP(costo);
+  if (elValorRepVenta) elValorRepVenta.textContent = fmtCLP(venta);
+  if (elValorRepGanancia) elValorRepGanancia.textContent = fmtCLP(ganancia);
+  if (elValorRepMargen) elValorRepMargen.textContent = `Margen estimado ${margen.toFixed(1)}%`;
+  if (elValorizacionRepDetalle) {
+    elValorizacionRepDetalle.textContent =
+      `${repuestosList.length} repuesto(s) · ${unidades} unidad(es) en stock · actualizado al ${fechaHoraISOChile()}`;
+  }
+  if (elValorizacionRepNota) {
+    elValorizacionRepNota.textContent = sinCosto > 0
+      ? `Atención: ${sinCosto} repuesto(s) con stock no tienen costo unitario cargado, por lo que la ganancia proyectada aparece más alta de lo real.`
+      : '';
+  }
+
+  elModalValorizacionRepuestos.classList.add('show');
 }
+
+document.addEventListener('DOMContentLoaded', () => {
+  if (elBtnCerrarValorizacionRepuestos) {
+    elBtnCerrarValorizacionRepuestos.addEventListener('click', () => elModalValorizacionRepuestos?.classList.remove('show'));
+  }
+  if (elModalValorizacionRepuestos) {
+    elModalValorizacionRepuestos.addEventListener('click', (e) => {
+      if (e.target === elModalValorizacionRepuestos) elModalValorizacionRepuestos.classList.remove('show');
+    });
+  }
+});
 
 // ============================================================
 // MODAL CREAR / EDITAR

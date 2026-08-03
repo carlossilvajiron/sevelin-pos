@@ -449,11 +449,13 @@ function precargarVentaDesdeOT(ot, itemsAsignados = []) {
     });
   });
 
-  if ((itemsAsignados || []).length === 0 && elItemNombre) {
-    // Sin repuestos asignados: se deja lista una línea de servicio
-    elItemNombre.value = `Servicio técnico ${ot.numero_ot} · ${ot.dispositivo_modelo || ''}`.trim();
-    if (elItemCantidad) elItemCantidad.value = 1;
-    if (elItemPrecio) { elItemPrecio.value = ''; setTimeout(() => elItemPrecio.focus(), 60); }
+  if ((itemsAsignados || []).length === 0) {
+    // Sin repuestos asignados en el taller: NO se rellena el campo Producto
+    // con el texto de la OT (antes aparecía como si fuera un ítem ya
+    // cargado). Solo queda vinculada la venta; el usuario escribe o busca
+    // el ítem a cobrar como en cualquier venta normal.
+    limpiarFormularioItem();
+    setTimeout(() => elItemNombre?.focus(), 60);
   }
 
   productoSeleccionado = null;

@@ -10,7 +10,10 @@
    ============================================================ */
 
 /* QR de reseñas de Google: se agrega solo si el usuario lo marca en la
-   pantalla de confirmación, y se pregunta en cada impresión. */
+   pantalla de confirmación, y se pregunta en cada impresión. La librería
+   se sirve desde el propio dominio (js/vendor/qrcode.min.js) para no
+   depender de un CDN externo que algunos bloqueadores de anuncios filtran
+   por el nombre "qrcode". */
 const URL_RESENA_GOOGLE = 'https://g.page/r/CZzFra1V3A9aEAE/review';
 
 function deseaQRResena() {
@@ -18,31 +21,40 @@ function deseaQRResena() {
   return !!(chk && chk.checked);
 }
 
-/* Genera el QR como imagen y lo inserta al final del ticket ya renderizado */
-async function agregarQRResena(container) {
-  if (!container || typeof QRCode === 'undefined') return;
+/* Genera el QR como SVG (vectorial: no depende de <canvas>, imprime más
+   nítido que un PNG) y lo inserta al final del ticket ya renderizado. */
+function agregarQRResena(container) {
+  return new Promise((resolve) => {
+    if (!container || typeof QRCode === 'undefined') {
+      console.warn('La librería de QR no está disponible; se imprime el ticket sin QR.');
+      resolve();
+      return;
+    }
 
-  try {
-    const dataUrl = await QRCode.toDataURL(URL_RESENA_GOOGLE, {
-      margin: 1, width: 220, color: { dark: '#000000', light: '#ffffff' }
+    QRCode.toString(URL_RESENA_GOOGLE, { type: 'svg', margin: 1, width: 130 }, (err, svg) => {
+      if (err) {
+        console.warn('No se pudo generar el QR de reseña:', err.message || err);
+        resolve();
+        return;
+      }
+
+      const bloque = document.createElement('div');
+      bloque.className = 't-qr';
+      bloque.innerHTML = `
+        <div class="t-line"></div>
+        <p class="t-center"><b>¿Cómo fue tu experiencia?</b></p>
+        ${svg}
+        <p class="t-center t-small">Escanea y déjanos tu reseña en Google</p>
+      `;
+
+      // Se inserta antes del espacio de corte del papel
+      const feed = container.querySelector('.t-feed');
+      if (feed) container.insertBefore(bloque, feed);
+      else container.appendChild(bloque);
+
+      resolve();
     });
-
-    const bloque = document.createElement('div');
-    bloque.className = 't-qr';
-    bloque.innerHTML = `
-      <div class="t-line"></div>
-      <p class="t-center"><b>¿Cómo fue tu experiencia?</b></p>
-      <img src="${dataUrl}" alt="QR de reseña">
-      <p class="t-center t-small">Escanea y déjanos tu reseña en Google</p>
-    `;
-
-    // Se inserta antes del espacio de corte del papel
-    const feed = container.querySelector('.t-feed');
-    if (feed) container.insertBefore(bloque, feed);
-    else container.appendChild(bloque);
-  } catch (err) {
-    console.warn('No se pudo generar el QR de reseña:', err.message || err);
-  }
+  });
 }
 
 function anchoTicket() {

@@ -1376,6 +1376,39 @@
   </div>
 
 
+
+  <!-- MODAL: RESUMEN DE VALORIZACIÓN DE REPUESTOS DE TALLER -->
+  <div id="modalValorizacionRepuestos" class="modal-overlay">
+    <div class="modal-box" style="max-width: 620px;">
+      <h2>💎 Resumen de Valorización — Taller</h2>
+      <p class="modal-hint" id="valorizacionRepDetalle">Calculado sobre el stock actual de repuestos internos.</p>
+
+      <div class="kpi-grid" style="margin-top:18px;">
+        <div class="kpi-card kpi-gold">
+          <div class="kpi-label">📦 Costo Total del Inventario</div>
+          <div class="kpi-value" id="valorRepCosto">$0</div>
+          <div class="kpi-foot">Stock × Costo unitario</div>
+        </div>
+        <div class="kpi-card kpi-blue">
+          <div class="kpi-label">🏷️ Venta Estimada (con M.O.)</div>
+          <div class="kpi-value" id="valorRepVenta">$0</div>
+          <div class="kpi-foot">Stock × Precio de venta</div>
+        </div>
+        <div class="kpi-card kpi-green">
+          <div class="kpi-label">📈 Ganancia Proyectada</div>
+          <div class="kpi-value" id="valorRepGanancia">$0</div>
+          <div class="kpi-foot" id="valorRepMargen">Margen 0%</div>
+        </div>
+      </div>
+
+      <p class="modal-hint" id="valorizacionRepNota"></p>
+
+      <div class="modal-foot">
+        <button class="btn btn-ghost" id="btnCerrarValorizacionRepuestos">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
   <!-- MODAL: NUEVO / EDITAR REPUESTO INTERNO -->
   <div id="modalRepuesto" class="modal-overlay">
     <div class="modal-box modal-lg">
@@ -1537,7 +1570,9 @@
   <!-- Escáner por cámara y generador de códigos de barras para etiquetas -->
   <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+  <!-- QR de reseñas: se sirve desde el propio dominio (no depende de un CDN externo
+       que algunos bloqueadores de anuncios filtran por el nombre "qrcode"). -->
+  <script src="js/vendor/qrcode.min.js"></script>
 
   <!-- Orden importante: api.js y config.js primero -->
   <script src="js/api.js"></script>
