@@ -68,6 +68,7 @@ const API = {
     actualizar: (id, p) => apiRequest(`/productos/${id}`, { method: 'PUT', body: p }),
     eliminar: (id) => apiRequest(`/productos/${id}`, { method: 'DELETE' }),
     eliminarTodos: () => apiRequest('/productos/todos', { method: 'DELETE' }),
+    eliminarLote: (ids) => apiRequest('/productos/eliminar-lote', { method: 'POST', body: { ids } }),
     importar: (productos) => apiRequest('/productos/bulk', { method: 'POST', body: { productos } })
   },
 

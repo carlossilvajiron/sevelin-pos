@@ -44,6 +44,7 @@ function abrirModalEtiqueta(producto) {
     const hayCodigo = !!(producto.codigo_barras || producto.sku);
     elEtqBarcode.checked = hayCodigo;
     elEtqBarcode.disabled = !hayCodigo;
+    document.getElementById('itemEtqBarcode')?.classList.toggle('disabled', !hayCodigo);
   }
   if (elEtqCantidad) elEtqCantidad.value = 1;
 

@@ -105,23 +105,34 @@ function construirTicketHTML(venta, items) {
     </div>
     <div class="t-line"></div>
     <p class="t-center">¡Gracias por su compra!</p>
-    <p class="t-center t-small">${escaparHTML(NEGOCIO_NOMBRE)} · ${fechaHoraChile()}</p>
+    <p class="t-center t-small">Le deseamos un excelente día ◝(ᵔᵕᵔ)◜</p>
     <div class="t-feed"></div>
   `;
 }
 
 /* El nombre del archivo al "Guardar como PDF" lo toma el navegador del
-   título del documento, así que se cambia justo antes de imprimir y se
-   restaura al terminar. */
+   título del documento. Se fija de inmediato (funciona en la mayoría de
+   los casos), pero además se vuelve a fijar en el evento "beforeprint",
+   que el navegador dispara justo en el instante en que arma el diálogo de
+   impresión — esto es lo que garantiza el nombre sugerido incluso con
+   impresoras reales de Windows (Microsoft Print to PDF), donde a veces el
+   cambio de título hecho unos milisegundos antes no alcanza a "asentarse". */
 const TITULO_ORIGINAL = document.title || 'Sistema POS - Sevelin';
+let tituloParaImprimir = null;
 
 function ponerTituloImpresion(titulo) {
+  tituloParaImprimir = titulo;
   document.title = titulo;
 }
 
 function restaurarTitulo() {
   document.title = TITULO_ORIGINAL;
+  tituloParaImprimir = null;
 }
+
+window.addEventListener('beforeprint', () => {
+  if (tituloParaImprimir) document.title = tituloParaImprimir;
+});
 
 /* Imprime el ticket. Se usa al finalizar la venta y al reimprimir. */
 function imprimirTicketVenta(venta, items, opciones) {
@@ -310,7 +321,7 @@ function imprimirTicketAbono(encargo, montoAbono) {
     <div class="t-line"></div>
     <p class="t-center">${Number(encargo.saldo) <= 0 ? 'ENCARGO PAGADO POR COMPLETO' : 'Este documento acredita la seña recibida.'}</p>
     <p class="t-center">¡Gracias por su compra!</p>
-    <p class="t-center t-small">${escaparHTML(NEGOCIO_NOMBRE)} · ${fechaHoraChile()}</p>
+    <p class="t-center t-small">Le deseamos un excelente día ◝(ᵔᵕᵔ)◜</p>
     <div class="t-feed"></div>
   `;
 

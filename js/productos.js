@@ -8,6 +8,8 @@
 
 let productsList = [];
 let editingProductId = null;
+let productosSeleccionados = new Set();
+let productosVisibles = [];   // última lista renderizada (para "seleccionar todo")
 
 /* Íconos SVG: heredan el color del botón, así el lápiz nunca se pierde
    contra el fondo (antes era un emoji sobre un degradado dorado). */
@@ -46,6 +48,7 @@ const elBtnImportarProductos = document.getElementById('btnImportarProductos');
 const elBtnExportarProductosExcel = document.getElementById('btnExportarProductosExcel');
 const elBtnExportarProductosCSV = document.getElementById('btnExportarProductosCSV');
 const elBtnExportarProductosPDF = document.getElementById('btnExportarProductosPDF');
+const elCheckTodosProductos = document.getElementById('checkTodosProductos');
 const elPanelBajoStock = document.getElementById('panelBajoStock');
 const elListaBajoStock = document.getElementById('listaBajoStock');
 const elBadgeBajoStockTotal = document.getElementById('badgeBajoStockTotal');
@@ -73,6 +76,12 @@ function setupProductosEventListeners() {
   if (elBtnEliminarTodosProductos) elBtnEliminarTodosProductos.addEventListener('click', eliminarTodosLosProductos);
 
   if (elOrdenProductos) elOrdenProductos.addEventListener('change', handleBuscarProductoTabla);
+
+  if (elCheckTodosProductos) elCheckTodosProductos.addEventListener('change', () => {
+    if (elCheckTodosProductos.checked) productosVisibles.forEach(p => productosSeleccionados.add(String(p.id)));
+    else productosVisibles.forEach(p => productosSeleccionados.delete(String(p.id)));
+    renderProductosTabla(productosVisibles);
+  });
   if (elBtnImportarProductos) elBtnImportarProductos.addEventListener('click', () => elInputImportarProductos?.click());
   if (elInputImportarProductos) elInputImportarProductos.addEventListener('change', handleImportarProductos);
   if (elBtnExportarProductosExcel) elBtnExportarProductosExcel.addEventListener('click', () => exportarProductos('xlsx'));
@@ -96,6 +105,11 @@ async function cargarProductos() {
 
   try {
     productsList = await API.productos.listar();
+
+    // Se descartan las selecciones de productos que ya no están en pantalla
+    const idsVisibles = new Set(productsList.map(p => String(p.id)));
+    productosSeleccionados.forEach(id => { if (!idsVisibles.has(id)) productosSeleccionados.delete(id); });
+
     handleBuscarProductoTabla();
     renderPanelBajoStock();
   } catch (err) {
@@ -207,16 +221,90 @@ function resumenMedidas(p) {
   return `${alto || 0}×${ancho || 0}×${prof || 0} cm<br><small style="color:var(--text-muted);">${peso || 0} kg</small>`;
 }
 
+// ---------- Selección múltiple y barra flotante ----------
+function actualizarBarraProductos() {
+  const cantidad = productosSeleccionados.size;
+
+  if (elCheckTodosProductos) {
+    elCheckTodosProductos.checked = productosVisibles.length > 0 &&
+      productosVisibles.every(p => productosSeleccionados.has(String(p.id)));
+  }
+
+  mostrarBarraSeleccion(cantidad, {
+    onJSON: descargarProductosJSON,
+    onCSV: descargarProductosExcel,
+    onEliminar: eliminarProductosSeleccionados,
+    onLimpiar: () => { productosSeleccionados.clear(); renderProductosTabla(productosVisibles); }
+  });
+}
+
+function productosMarcados() {
+  return productsList.filter(p => productosSeleccionados.has(String(p.id)));
+}
+
+function descargarProductosJSON() {
+  const seleccion = productosMarcados();
+  if (seleccion.length === 0) return;
+
+  const respaldo = {
+    sistema: 'Sevelin POS',
+    modulo: 'Productos',
+    generado_en: fechaHoraISOChile(),
+    zona_horaria: 'America/Santiago',
+    cantidad: seleccion.length,
+    productos: seleccion
+  };
+
+  descargarArchivo(`respaldo_productos_${todayISO()}.json`, JSON.stringify(respaldo, null, 2));
+  showToast(`${seleccion.length} producto(s) exportado(s) en JSON`, 'ok');
+}
+
+function descargarProductosExcel() {
+  const seleccion = productosMarcados();
+  if (seleccion.length === 0) return;
+
+  const filas = seleccion.map(filaProductoParaExportar);
+  const libro = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(libro, XLSX.utils.json_to_sheet(filas), 'Productos');
+  XLSX.writeFile(libro, `productos_seleccionados_${todayISO()}.xlsx`);
+  showToast(`${filas.length} producto(s) exportado(s) a Excel`, 'ok');
+}
+
+async function eliminarProductosSeleccionados() {
+  const seleccion = productosMarcados();
+  if (seleccion.length === 0) return;
+
+  if (!confirm(`¿Estás seguro de que deseas eliminar los ${seleccion.length} registros seleccionados? Esta acción no se puede deshacer.`)) return;
+
+  try {
+    const r = await API.productos.eliminarLote(seleccion.map(p => p.id));
+
+    productosSeleccionados.clear();
+    ocultarBarraSeleccion();
+    showToast(`${r.eliminadas} producto(s) eliminado(s)`, 'ok');
+
+    await cargarProductos();
+  } catch (err) {
+    console.error('Error al eliminar los productos:', err.message || err);
+    showToast(err.message || 'No se pudieron eliminar los productos', 'err');
+  }
+}
+
 function renderProductosTabla(items) {
   if (!elProductosTableBody) return;
+  productosVisibles = items || [];
 
   if (!items || items.length === 0) {
-    elProductosTableBody.innerHTML = '<tr class="empty-row"><td colspan="10">No hay productos en el inventario. Crea uno o importa tu CSV de Tiendanube.</td></tr>';
+    elProductosTableBody.innerHTML = '<tr class="empty-row"><td colspan="11">No hay productos en el inventario. Crea uno o importa tu CSV de Tiendanube.</td></tr>';
+    actualizarBarraProductos();
     return;
   }
 
-  elProductosTableBody.innerHTML = items.map(p => `
-    <tr class="row-in">
+  elProductosTableBody.innerHTML = items.map(p => {
+    const marcada = productosSeleccionados.has(String(p.id));
+    return `
+    <tr class="row-in${marcada ? ' fila-marcada' : ''}">
+      <td class="col-check"><input type="checkbox" data-sel="${p.id}" ${marcada ? 'checked' : ''}></td>
       <td>${p.sku || '-'}</td>
       <td>${p.codigo_barras || '-'}</td>
       <td>
@@ -236,8 +324,19 @@ function renderProductosTabla(items) {
           <button class="btn btn-icon btn-icon-del" data-eliminar="${p.id}" title="Eliminar producto">${ICO_ELIMINAR_PROD}</button>
         </div>
       </td>
-    </tr>
-  `).join('');
+    </tr>`;
+  }).join('');
+
+  elProductosTableBody.querySelectorAll('input[data-sel]').forEach(chk => {
+    chk.addEventListener('change', () => {
+      const id = String(chk.dataset.sel);
+      if (chk.checked) productosSeleccionados.add(id); else productosSeleccionados.delete(id);
+      chk.closest('tr')?.classList.toggle('fila-marcada', chk.checked);
+      actualizarBarraProductos();
+    });
+  });
+
+  actualizarBarraProductos();
 
   elProductosTableBody.querySelectorAll('button[data-editar]').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -557,7 +656,11 @@ function obtenerFilasProductosParaExportar() {
   else base = base.slice().sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
 
   // Encabezados idénticos a Tiendanube para poder reimportar sin tocar nada
-  return base.map(p => ({
+  return base.map(filaProductoParaExportar);
+}
+
+function filaProductoParaExportar(p) {
+  return {
     SKU: p.sku || '',
     'Código de Barras': p.codigo_barras || '',
     Nombre: p.nombre || '',
@@ -573,7 +676,7 @@ function obtenerFilasProductosParaExportar() {
     'Stock Mínimo': Number(p.stock_minimo) || 0,
     'Alerta de Stock': p.alerta_stock === false ? 'Desactivada' : 'Activa',
     'Última Act. Stock': p.stock_actualizado_en ? tsAChile(p.stock_actualizado_en) : ''
-  }));
+  };
 }
 
 function exportarProductos(formato) {

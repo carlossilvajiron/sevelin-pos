@@ -223,6 +223,17 @@ app.put('/api/productos/:id', auth(true), async (req, res) => {
   res.json(data);
 });
 
+// Eliminación masiva desde la barra de selección (lista explícita de ids).
+// Se registra ANTES de "/:id" para no chocar con esa ruta.
+app.post('/api/productos/eliminar-lote', auth(true), async (req, res) => {
+  const ids = (Array.isArray(req.body?.ids) ? req.body.ids : []).map(Number).filter(Boolean);
+  if (ids.length === 0) return enviarError(res, 400, 'No hay productos seleccionados');
+
+  const { error } = await db.from('productos').delete().in('id', ids);
+  if (error) return enviarError(res, 500, error.message);
+  res.json({ eliminadas: ids.length });
+});
+
 app.delete('/api/productos/:id', auth(true), async (req, res) => {
   if (req.params.id === 'todos') {
     const { error } = await db.from('productos').delete().gt('id', 0);

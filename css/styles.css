@@ -542,6 +542,7 @@ body.theme-light .modal-login-overlay {
     box-shadow: 0 30px 70px rgba(3, 8, 20, .55), 0 0 0 1px rgba(148, 163, 184, .12);
 }
 .modal-box.modal-lg { max-width: 860px; }
+.modal-box { overflow-x: hidden; }
 .modal-box.modal-centro { text-align: center; }
 .icon-success { font-size: 46px; line-height: 1; margin-bottom: 8px; }
 
@@ -754,6 +755,22 @@ a.doc-check.doc-ok:hover { transform: scale(1.1); }
 
 .doc-check.doc-falta { cursor: pointer; transition: transform var(--speed), background-color var(--speed); }
 .doc-check.doc-falta:hover { transform: scale(1.12); background: rgba(239, 68, 68, .3); }
+
+/* Lista vertical de checkboxes: reemplaza a .sn-toggle en grillas densas,
+   donde el "white-space: nowrap" de .sn-toggle desbordaba el modal con
+   textos largos (ej. modal de "Imprimir Etiqueta"). */
+.check-list { display: flex; flex-direction: column; gap: 8px; }
+.check-item {
+    display: flex; align-items: center; gap: 10px; cursor: pointer;
+    padding: 10px 14px; border-radius: var(--radius-sm);
+    background: var(--bg-900); border: 1.5px solid var(--border);
+    font-size: 14px; font-weight: 600; color: var(--text-300);
+    transition: border-color var(--speed), background-color var(--speed);
+}
+.check-item:hover { border-color: var(--blue-light); }
+.check-item input[type="checkbox"] { width: 18px; height: 18px; flex: none; accent-color: var(--blue); }
+.check-item span { flex: 1; }
+.check-item.disabled { opacity: .5; cursor: not-allowed; }
 
 /* ========== 15. ESCÁNER, ETIQUETAS Y FICHAS ========== */
 .input-scan { display: flex; gap: 8px; align-items: stretch; }

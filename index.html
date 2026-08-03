@@ -543,6 +543,7 @@
           <table class="data-table">
             <thead>
               <tr>
+                <th class="col-check"><input type="checkbox" id="checkTodosProductos" title="Seleccionar todo"></th>
                 <th>SKU</th>
                 <th>Código Barras</th>
                 <th>Nombre / Descripción</th>
@@ -556,7 +557,7 @@
               </tr>
             </thead>
             <tbody id="productosTableBody">
-              <tr class="empty-row"><td colspan="10">Cargando productos...</td></tr>
+              <tr class="empty-row"><td colspan="11">Cargando productos...</td></tr>
             </tbody>
           </table>
         </div>
@@ -1219,10 +1220,10 @@
       <p class="modal-hint" id="etiquetaProducto">—</p>
 
       <span class="section-label" style="margin-top:16px;">¿Qué datos incluir?</span>
-      <div class="grid grid-3">
-        <label class="sn-toggle"><input type="checkbox" id="etqNombre" checked> Nombre del producto</label>
-        <label class="sn-toggle"><input type="checkbox" id="etqPrecio" checked> Precio de venta ($)</label>
-        <label class="sn-toggle"><input type="checkbox" id="etqBarcode" checked> Código de barras</label>
+      <div class="check-list">
+        <label class="check-item" id="itemEtqNombre"><input type="checkbox" id="etqNombre" checked><span>Nombre del producto</span></label>
+        <label class="check-item" id="itemEtqPrecio"><input type="checkbox" id="etqPrecio" checked><span>Precio de venta ($)</span></label>
+        <label class="check-item" id="itemEtqBarcode"><input type="checkbox" id="etqBarcode" checked><span>Código de barras</span></label>
       </div>
 
       <div class="grid grid-2" style="margin-top:14px;">
